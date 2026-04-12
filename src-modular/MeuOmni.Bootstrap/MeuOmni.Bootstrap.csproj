@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\MeuOmni.BuildingBlocks\MeuOmni.BuildingBlocks.csproj" />
+    <ProjectReference Include="..\Modules\AccessControl\MeuOmni.Modules.AccessControl.Api\MeuOmni.Modules.AccessControl.Api.csproj" />
+    <ProjectReference Include="..\Modules\AccessControl\MeuOmni.Modules.AccessControl.Infrastructure\MeuOmni.Modules.AccessControl.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\SalesChannel\MeuOmni.Modules.SalesChannel.Api\MeuOmni.Modules.SalesChannel.Api.csproj" />
+    <ProjectReference Include="..\Modules\SalesChannel\MeuOmni.Modules.SalesChannel.Infrastructure\MeuOmni.Modules.SalesChannel.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Customers\MeuOmni.Modules.Customers.Api\MeuOmni.Modules.Customers.Api.csproj" />
+    <ProjectReference Include="..\Modules\Customers\MeuOmni.Modules.Customers.Infrastructure\MeuOmni.Modules.Customers.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Catalog\MeuOmni.Modules.Catalog.Api\MeuOmni.Modules.Catalog.Api.csproj" />
+    <ProjectReference Include="..\Modules\Catalog\MeuOmni.Modules.Catalog.Infrastructure\MeuOmni.Modules.Catalog.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Inventory\MeuOmni.Modules.Inventory.Api\MeuOmni.Modules.Inventory.Api.csproj" />
+    <ProjectReference Include="..\Modules\Inventory\MeuOmni.Modules.Inventory.Infrastructure\MeuOmni.Modules.Inventory.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Cashbook\MeuOmni.Modules.Cashbook.Api\MeuOmni.Modules.Cashbook.Api.csproj" />
+    <ProjectReference Include="..\Modules\Cashbook\MeuOmni.Modules.Cashbook.Infrastructure\MeuOmni.Modules.Cashbook.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Suppliers\MeuOmni.Modules.Suppliers.Api\MeuOmni.Modules.Suppliers.Api.csproj" />
+    <ProjectReference Include="..\Modules\Suppliers\MeuOmni.Modules.Suppliers.Infrastructure\MeuOmni.Modules.Suppliers.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Operations\MeuOmni.Modules.Operations.Api\MeuOmni.Modules.Operations.Api.csproj" />
+    <ProjectReference Include="..\Modules\Operations\MeuOmni.Modules.Operations.Infrastructure\MeuOmni.Modules.Operations.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Reporting\MeuOmni.Modules.Reporting.Api\MeuOmni.Modules.Reporting.Api.csproj" />
+    <ProjectReference Include="..\Modules\Reporting\MeuOmni.Modules.Reporting.Infrastructure\MeuOmni.Modules.Reporting.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\Auditing\MeuOmni.Modules.Auditing.Api\MeuOmni.Modules.Auditing.Api.csproj" />
+    <ProjectReference Include="..\Modules\Auditing\MeuOmni.Modules.Auditing.Infrastructure\MeuOmni.Modules.Auditing.Infrastructure.csproj" />
+    <ProjectReference Include="..\Modules\SimpleCommerce\MeuOmni.Modules.SimpleCommerce.Api\MeuOmni.Modules.SimpleCommerce.Api.csproj" />
+    <ProjectReference Include="..\Modules\SimpleCommerce\MeuOmni.Modules.SimpleCommerce.Infrastructure\MeuOmni.Modules.SimpleCommerce.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.3" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

@@ -1,93 +1,178 @@
-# meu-omni-solutions
+# MeuOmni Solutions
 
+> Hệ thống quản lý bán hàng đa kênh (Omni-channel Retail Management System) với kiến trúc Modular Monolith + DDD
 
+## 📋 Tổng quan
 
-## Getting started
+**MeuOmni** là hệ thống quản lý bán hàng tích hợp đa kênh, hỗ trợ:
+- 🏪 **POS** - Bán hàng tại quầy
+- 📞 **Hotline** - Đặt hàng qua điện thoại
+- 🌐 **Website** - Cửa hàng trực tuyến
+- 📱 **Facebook/Zalo** - Bán hàng qua mạng xã hội
+- 🛒 **Marketplace** - Kết nối Shopee, Lazada, etc.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 🏗️ Kiến trúc
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+Hệ thống được thiết kế theo:
+- **DDD (Domain-Driven Design)** - Business logic trong Domain layer
+- **Modular Monolith** - Modules độc lập trong cùng một host
+- **Database Per Module** - Mỗi module có database riêng biệt
 
-## Add your files
+### Nguyên tắc thiết kế:
+1. ✅ Mỗi module sở hữu nghiệp vụ và dữ liệu của chính nó
+2. ✅ Không join trực tiếp dữ liệu giữa các module
+3. ✅ Không tạo foreign key xuyên module/database
+4. ✅ Business rules nằm trong Domain, không nằm trong Controller
+5. ✅ Module giao tiếp qua contract/event/read model
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## 📂 Cấu trúc Project
 
 ```
-cd existing_repo
-git remote add origin http://gitlab-v2.meu-solutions.com/hongdang.doan/meu-omni-solutions.git
-git branch -M main
-git push -uf origin main
+MeuOmni.Modular.sln              # Solution chính
+├── src-modular/
+│   ├── MeuOmni.Bootstrap/       # Host application (composition root)
+│   ├── MeuOmni.BuildingBlocks/  # Shared kernel
+│   └── Modules/
+│       ├── SalesChannel/        # Module trung tâm - quản lý đơn hàng đa kênh
+│       │   ├── Domain/          # Entities, Aggregates, Business Rules
+│       │   ├── Application/     # Use cases, Commands, Queries
+│       │   ├── Infrastructure/  # DbContext, Repositories
+│       │   └── Api/             # Controllers, Endpoints
+│       └── SimpleCommerce/      # Module e-commerce đơn giản
+│           ├── Domain/
+│           ├── Application/
+│           ├── Infrastructure/
+│           └── Api/
+├── tests/                       # Test projects
+├── docs/                        # 📚 Tài liệu kiến trúc
+└── documents/                   # 📄 Tài liệu nghiệp vụ
+
 ```
 
-## Integrate with your tools
+### Module chính:
 
-- [ ] [Set up project integrations](http://gitlab-v2.meu-solutions.com/hongdang.doan/meu-omni-solutions/-/settings/integrations)
+| Module | Database | Trách nhiệm |
+|--------|----------|-------------|
+| **SalesChannel** | `qlbh_sales_channel` | Quản lý đơn hàng từ tất cả các kênh (POS, Online, Hotline, Facebook, Zalo, Marketplace) |
+| **SimpleCommerce** | `qlbh_simple_commerce` | Storefront và e-commerce (là một channel của SalesChannel) |
 
-## Collaborate with your team
+## 🚀 Quick Start
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+### Prerequisites
 
-## Test and Deploy
+- .NET 8.0 SDK
+- PostgreSQL 14+
+- Visual Studio 2022 hoặc VS Code
 
-Use the built-in continuous integration in GitLab.
+### 1. Clone & Setup
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+```bash
+git clone <repository-url>
+cd meu-omni-solutions
+```
 
-***
+### 2. Configure Database
 
-# Editing this README
+Copy `.env.example` thành `.env` và cấu hình:
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+```bash
+cp .env.example .env
+```
 
-## Suggestions for a good README
+Chỉnh sửa `.env`:
+```env
+Modules__SalesChannel__Database__ConnectionString=Host=localhost;Port=5432;Database=qlbh_sales_channel;Username=postgres;Password=your_password
+Modules__SimpleCommerce__Database__ConnectionString=Host=localhost;Port=5432;Database=qlbh_simple_commerce;Username=postgres;Password=your_password
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### 3. Build & Run
 
-## Name
-Choose a self-explaining name for your project.
+```bash
+# Build solution
+dotnet build MeuOmni.Modular.sln
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+# Run host
+cd src-modular/MeuOmni.Bootstrap
+dotnet run
+```
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+### 4. Access Swagger
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+Mở browser: `http://localhost:5000/swagger`
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## 📊 Tiến độ Development
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+| Phase | Module/Layer | Status |
+|-------|--------------|--------|
+| Phase 1 | SalesChannel Domain | ✅ Hoàn thành |
+| Phase 2 | SalesChannel Infrastructure | ⏳ Tiếp theo |
+| Phase 3 | SalesChannel Application | 📋 Chờ |
+| Phase 4 | SalesChannel API | 📋 Chờ |
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+**Lưu ý**: Old solution (MeuOmni.sln) và source code cũ (src/) đã được clean up. Project hiện chỉ sử dụng kiến trúc mới.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+Chi tiết: [docs/migration-report-phase1-saleschannel-domain.md](docs/migration-report-phase1-saleschannel-domain.md)
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+## 📚 Tài liệu
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+### Kiến trúc:
+- [Tổng quan kiến trúc](docs/architecture.md)
+- [Database per Module](docs/modular-monolith-separate-databases.md)
+- [Hướng dẫn Migration](docs/migration-prompt-modular-ddd.md)
+- [Checklist triển khai](docs/checklist-status.md)
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+### Use case mẫu:
+- [Shift Login & Open Shift (DDD)](docs/shift-login-open-shift-ddd.md)
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+### Business documents:
+- [FRS - Phần mềm quản lý bán hàng](documents/FRS_Phan_mem_quan_ly_ban_hang.docx)
+- [API Listing](documents/DanhSach_API_QLBH.xlsx)
 
-## License
-For open source projects, say how it is licensed.
+## 🛠️ Development
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+### Build
+
+```bash
+dotnet build MeuOmni.Modular.sln
+```
+
+### Clean
+
+```bash
+dotnet clean MeuOmni.Modular.sln
+```
+
+### Run Tests (WIP)
+
+```bash
+dotnet test
+```
+
+## 🎯 Roadmap
+
+### Modules cần tách tiếp theo:
+- [ ] Catalog (Quản lý sản phẩm)
+- [ ] Inventory (Quản lý tồn kho)
+- [ ] Customers (Quản lý khách hàng)
+- [ ] AccessControl (User, Role, Permission)
+- [ ] Auditing (Audit logs)
+- [ ] Pricing, Payments, Promotions, Returns
+
+## 🤝 Contributing
+
+Quy trình làm việc:
+1. Đọc tài liệu kiến trúc trong `docs/`
+2. Follow nguyên tắc DDD và Modular Monolith
+3. Development incremental, build phải xanh sau mỗi bước
+4. Update documentation khi cần
+
+## 📝 License
+
+Proprietary - MeU Solutions
+
+## 📞 Contact
+
+- Team: MeU Solutions Development Team
+- Project: MeuOmni - Omni-channel Retail Management
+- GitLab: http://gitlab-v2.meu-solutions.com
+
