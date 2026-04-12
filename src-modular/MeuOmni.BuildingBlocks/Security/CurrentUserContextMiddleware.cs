@@ -6,26 +6,6 @@ namespace MeuOmni.BuildingBlocks.Security;
 
 public sealed class CurrentUserContextMiddleware(RequestDelegate next)
 {
-    private static readonly string[] UserIdClaimTypes =
-    [
-        ClaimTypes.NameIdentifier,
-        "sub",
-        "user_id"
-    ];
-
-    private static readonly string[] RoleClaimTypes =
-    [
-        ClaimTypes.Role,
-        "role",
-        "roles"
-    ];
-
-    private static readonly string[] PermissionClaimTypes =
-    [
-        "permission",
-        "permissions"
-    ];
-
     public async Task InvokeAsync(HttpContext context, CurrentUserContextAccessor currentUserContextAccessor)
     {
         if (!IsApiRequest(context))
@@ -43,7 +23,7 @@ public sealed class CurrentUserContextMiddleware(RequestDelegate next)
 
     private static string? GetCurrentUserId(HttpContext context)
     {
-        var claimValue = UserIdClaimTypes
+        var claimValue = SecurityClaimTypes.UserId
             .Select(type => context.User.FindFirst(type)?.Value)
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 
@@ -60,7 +40,7 @@ public sealed class CurrentUserContextMiddleware(RequestDelegate next)
     private static IEnumerable<string> GetRoleClaims(ClaimsPrincipal principal)
     {
         return principal.Claims
-            .Where(claim => RoleClaimTypes.Contains(claim.Type, StringComparer.OrdinalIgnoreCase))
+            .Where(claim => SecurityClaimTypes.Role.Contains(claim.Type, StringComparer.OrdinalIgnoreCase))
             .SelectMany(claim => ExpandClaimValue(claim.Value, splitOnSpaces: false))
             .Distinct(StringComparer.OrdinalIgnoreCase);
     }
@@ -68,7 +48,7 @@ public sealed class CurrentUserContextMiddleware(RequestDelegate next)
     private static IEnumerable<string> GetPermissionClaims(ClaimsPrincipal principal)
     {
         return principal.Claims
-            .Where(claim => PermissionClaimTypes.Contains(claim.Type, StringComparer.OrdinalIgnoreCase))
+            .Where(claim => SecurityClaimTypes.Permission.Contains(claim.Type, StringComparer.OrdinalIgnoreCase))
             .SelectMany(claim => ExpandClaimValue(claim.Value, splitOnSpaces: true))
             .Distinct(StringComparer.OrdinalIgnoreCase);
     }

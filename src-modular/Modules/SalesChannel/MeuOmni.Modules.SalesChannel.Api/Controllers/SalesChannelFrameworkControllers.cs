@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using MeuOmni.BuildingBlocks.Idempotency;
 using MeuOmni.BuildingBlocks.Security;
 using MeuOmni.BuildingBlocks.Web;
 
@@ -54,6 +55,7 @@ public sealed class BillsController(
     public IActionResult GetAll() => Ok(new { scaffold = true, resource = "bills", tenantId = TenantId });
 
     [HttpPost]
+    [RequireIdempotency]
     [RequirePermission(PermissionCodes.SalesChannel.Bills.Create)]
     public IActionResult Create([FromBody] object? request) => Accepted(new { scaffold = true, resource = "bills", operation = "create", request, tenantId = TenantId });
 
@@ -121,6 +123,7 @@ public sealed class PaymentsController(
     public IActionResult GetAll() => Ok(new { scaffold = true, resource = "payments", tenantId = TenantId });
 
     [HttpPost]
+    [RequireIdempotency]
     [RequirePermission(PermissionCodes.SalesChannel.Payments.Create)]
     public IActionResult Create([FromBody] object? request) => Accepted(new { scaffold = true, resource = "payments", operation = "create", request, tenantId = TenantId });
 
@@ -140,6 +143,7 @@ public sealed class ReturnsController(
     public IActionResult GetAll() => Ok(new { scaffold = true, resource = "returns", tenantId = TenantId });
 
     [HttpPost]
+    [RequireIdempotency]
     [RequirePermission(PermissionCodes.SalesChannel.Returns.Create)]
     public IActionResult Create([FromBody] object? request) => Accepted(new { scaffold = true, resource = "returns", operation = "create", request, tenantId = TenantId });
 

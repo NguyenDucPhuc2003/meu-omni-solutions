@@ -4,4 +4,5 @@ public static class RequestHeaderNames
 {
     public const string TenantId = "X-Tenant-Id";
     public const string UserId = "X-User-Id";
+    public const string IdempotencyKey = "Idempotency-Key";
 }

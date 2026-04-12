@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using MeuOmni.BuildingBlocks.Idempotency;
 using MeuOmni.BuildingBlocks.Persistence;
 using MeuOmni.BuildingBlocks.Security;
 using MeuOmni.Modules.SalesChannel.Domain.Orders.Entities;
@@ -14,6 +16,7 @@ public sealed class SalesChannelDbContext(
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         var order = modelBuilder.Entity<SalesOrder>();
+        ConfigureIdempotencyRequest(modelBuilder.Entity<IdempotencyRequestRecord>());
         order.ToTable("sales_orders");
         order.HasKey(x => x.Id);
         order.Property(x => x.TenantId).HasMaxLength(64).IsRequired();
@@ -38,5 +41,22 @@ public sealed class SalesChannelDbContext(
         order.Navigation(x => x.Lines).AutoInclude();
 
         ApplyTenantQueryFilters(modelBuilder);
+    }
+
+    private static void ConfigureIdempotencyRequest(EntityTypeBuilder<IdempotencyRequestRecord> entity)
+    {
+        entity.ToTable("sales_channel_idempotency_request");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.TenantId).HasMaxLength(64).IsRequired();
+        entity.Property(x => x.RequestMethod).HasMaxLength(16).IsRequired();
+        entity.Property(x => x.RequestPath).HasMaxLength(256).IsRequired();
+        entity.Property(x => x.IdempotencyKey).HasMaxLength(128).IsRequired();
+        entity.Property(x => x.RequestHash).HasMaxLength(64).IsRequired();
+        entity.Property(x => x.State).HasMaxLength(32).IsRequired();
+        entity.Property(x => x.ResponseContentType).HasMaxLength(128);
+        entity.Property(x => x.CreatedAtUtc).IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).IsRequired();
+        entity.HasIndex(x => new { x.TenantId, x.RequestMethod, x.RequestPath, x.IdempotencyKey })
+            .IsUnique();
     }
 }

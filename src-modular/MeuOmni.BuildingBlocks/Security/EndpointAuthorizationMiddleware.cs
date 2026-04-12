@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using MeuOmni.BuildingBlocks.Web;
 
 namespace MeuOmni.BuildingBlocks.Security;
 
@@ -28,12 +29,11 @@ public sealed class EndpointAuthorizationMiddleware(RequestDelegate next)
 
         if (IsModuleApiRequest(context) && requiredRoles.Length == 0 && requiredPermissions.Length == 0)
         {
-            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-            await context.Response.WriteAsJsonAsync(new
-            {
-                error = "endpoint_security_metadata_missing",
-                message = "Module API endpoints must declare at least one RequireRole or RequirePermission attribute."
-            });
+            await ApiResponseFactory.WriteErrorAsync(
+                context,
+                StatusCodes.Status500InternalServerError,
+                "Module API endpoints must declare at least one RequireRole or RequirePermission attribute.",
+                "endpoint_security_metadata_missing");
             return;
         }
 
@@ -45,36 +45,33 @@ public sealed class EndpointAuthorizationMiddleware(RequestDelegate next)
 
         if (!currentUserContextAccessor.IsAuthenticated)
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsJsonAsync(new
-            {
-                error = "authentication_required",
-                message = "An authenticated token or upstream authenticated principal is required for this endpoint."
-            });
+            await ApiResponseFactory.WriteErrorAsync(
+                context,
+                StatusCodes.Status401Unauthorized,
+                "An authenticated token or upstream authenticated principal is required for this endpoint.",
+                "authentication_required");
             return;
         }
 
         if (requiredRoles.Length > 0 && !currentUserContextAccessor.HasAnyRole(requiredRoles))
         {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            await context.Response.WriteAsJsonAsync(new
-            {
-                error = "role_forbidden",
-                message = "Current user does not satisfy the required role.",
-                required_roles = requiredRoles
-            });
+            await ApiResponseFactory.WriteErrorAsync(
+                context,
+                StatusCodes.Status403Forbidden,
+                "Current user does not satisfy the required role.",
+                "role_forbidden",
+                [new ApiErrorItem("required_roles", string.Join(", ", requiredRoles))]);
             return;
         }
 
         if (requiredPermissions.Length > 0 && !currentUserContextAccessor.HasAllPermissions(requiredPermissions))
         {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            await context.Response.WriteAsJsonAsync(new
-            {
-                error = "permission_forbidden",
-                message = "Current user does not satisfy the required permission set.",
-                required_permissions = requiredPermissions
-            });
+            await ApiResponseFactory.WriteErrorAsync(
+                context,
+                StatusCodes.Status403Forbidden,
+                "Current user does not satisfy the required permission set.",
+                "permission_forbidden",
+                [new ApiErrorItem("required_permissions", string.Join(", ", requiredPermissions))]);
             return;
         }
 

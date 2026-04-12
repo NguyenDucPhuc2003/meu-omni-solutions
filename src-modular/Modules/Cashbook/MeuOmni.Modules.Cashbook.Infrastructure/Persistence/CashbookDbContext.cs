@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using MeuOmni.BuildingBlocks.Domain;
+using MeuOmni.BuildingBlocks.Idempotency;
 using MeuOmni.BuildingBlocks.Persistence;
 using MeuOmni.BuildingBlocks.Security;
 using MeuOmni.Modules.Cashbook.Domain.Cashbooks;
@@ -14,6 +15,7 @@ public sealed class CashbookDbContext(
 {
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ConfigureIdempotencyRequest(modelBuilder.Entity<IdempotencyRequestRecord>());
         ConfigureCashbook(modelBuilder.Entity<CashbookAggregate>());
         ConfigureCashTransaction(modelBuilder.Entity<CashTransaction>());
         ConfigureCashReconciliation(modelBuilder.Entity<CashReconciliation>());
@@ -61,5 +63,22 @@ public sealed class CashbookDbContext(
         entity.Property(x => x.Difference).HasPrecision(18, 2);
         entity.Property(x => x.DifferenceReason).HasMaxLength(512);
         entity.Property(x => x.ConfirmedBy).HasMaxLength(128);
+    }
+
+    private static void ConfigureIdempotencyRequest(EntityTypeBuilder<IdempotencyRequestRecord> entity)
+    {
+        entity.ToTable("cashbook_idempotency_request");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.TenantId).HasMaxLength(64).IsRequired();
+        entity.Property(x => x.RequestMethod).HasMaxLength(16).IsRequired();
+        entity.Property(x => x.RequestPath).HasMaxLength(256).IsRequired();
+        entity.Property(x => x.IdempotencyKey).HasMaxLength(128).IsRequired();
+        entity.Property(x => x.RequestHash).HasMaxLength(64).IsRequired();
+        entity.Property(x => x.State).HasMaxLength(32).IsRequired();
+        entity.Property(x => x.ResponseContentType).HasMaxLength(128);
+        entity.Property(x => x.CreatedAtUtc).IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).IsRequired();
+        entity.HasIndex(x => new { x.TenantId, x.RequestMethod, x.RequestPath, x.IdempotencyKey })
+            .IsUnique();
     }
 }

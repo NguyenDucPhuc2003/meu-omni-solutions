@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using MeuOmni.BuildingBlocks.Idempotency;
 using MeuOmni.BuildingBlocks.Security;
 using MeuOmni.BuildingBlocks.Web;
 using MeuOmni.Modules.Inventory.Application.Inventory;
@@ -20,6 +21,7 @@ public sealed class StockTransactionsController(
     }
 
     [RequirePermission(PermissionCodes.Inventory.StockTransactions.Create)]
+    [RequireIdempotency]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateStockTransactionRequest request, CancellationToken cancellationToken)
     {

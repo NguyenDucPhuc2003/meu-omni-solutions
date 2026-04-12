@@ -1,96 +1,220 @@
-# API Design Full Spec - MeuOmni POS
+# MasterCare API Design Chi Tiet
 
-Tài liệu này là bản chi tiết hóa từ [API_Design_Redesign_Co_Dau_v2.md](C:/Work/MeU%20Solutions/Project/meu-omni-solutions/documents/API_Design_Redesign_Co_Dau_v2.md), bổ sung:
+Ban nay duoc cap nhat theo:
 
-- path params
-- query params
-- request payload
-- response mẫu
+- `[MasterCare]_meuomni.sql`
+- `[MasterCare] API Design - FRS-v2.md`
+- `[MasterCare]_Must Fix Before Code.md`
 
-Phạm vi phase 1:
+Muc tieu cua file nay la dung ten field `snake_case` giong DB schema cho payload, param filter, va response mau.
 
-- Auth
-- Identity & Access
-- POS
-- Customers
-- Catalog
-- Inventory
-- Cashbook
-- Suppliers
-- Employees
-- Reports
-- Audit
-- Devices / Settings
-
-## 1. Quy ước chung
+## 1. Conventions
 
 ### 1.1. Base URL
 
 - `/api/v1`
 
-### 1.2. Header chuẩn
+### 1.2. Required headers
 
 ```http
-Authorization: Bearer <access-token>
-X-Tenant-Id: tenant-demo
+Authorization: Bearer <access_token>
 Content-Type: application/json
+Idempotency-Key: <required-for-create-post>
 ```
 
-### 1.3. Response envelope thành công
+Protected API runtime contract:
+
+- `tenant_id` duoc resolve tu JWT claim hoac authenticated principal.
+- `X-Tenant-Id` khong phai header bat buoc cho user thong thuong.
+- `X-Tenant-Id` chi duoc dung nhu cross-tenant override cho `super-admin` hoac principal co quyen dac biet.
+- Neu token khong co `tenant_id` o protected endpoint, middleware phai reject request.
+
+### 1.3. Query convention
+
+- `filters`
+- `sorts`
+- `page`
+- `page_size`
+- `include`
+- `fields`
+- `include_inactive`
+
+Vi du:
+
+```http
+GET /api/v1/products?filters=name@=*ao*;is_active==true&sorts=-created_at&page=1&page_size=20
+GET /api/v1/bills/{id}?include=items,payments,customer
+GET /api/v1/stock-levels?warehouse_id=wh_001&product_id=prd_001
+```
+
+### 1.4. Success response
+
+Quy tac:
+
+- `data` la `object` cho detail/create/update/action APIs.
+- `data` la `array` cho list APIs.
+- `data` co the la `null` neu endpoint chi tra trang thai thanh cong.
+- `meta` bat buoc co voi list phan trang va async/export jobs.
+- `trace_id` bat buoc co o moi response JSON.
+
+Success response cho detail/create/action:
 
 ```json
 {
   "success": true,
   "message": "OK",
   "data": {},
-  "meta": null,
+  "meta": {
+    "page": 1,
+    "page_size": 20,
+    "total": 100
+  },
   "trace_id": "trace-001"
 }
 ```
 
-### 1.4. Response envelope lỗi
+Success response cho list:
+
+```json
+{
+  "success": true,
+  "message": "OK",
+  "data": [],
+  "meta": {
+    "page": 1,
+    "page_size": 20,
+    "total": 100,
+    "sorts": "-created_at",
+    "filters": "is_active==true"
+  },
+  "trace_id": "trace-001"
+}
+```
+
+Success response cho async/export:
+
+```json
+{
+  "success": true,
+  "message": "Job queued",
+  "data": {
+    "job_id": "job_export_001",
+    "status": "QUEUED"
+  },
+  "meta": {
+    "resource": "reports_export"
+  },
+  "trace_id": "trace-001"
+}
+```
+
+### 1.5. Error response
 
 ```json
 {
   "success": false,
-  "message": "Business rule violated",
+  "message": "Validation error",
   "error_code": "VALIDATION_ERROR",
   "errors": [
     {
-      "field": "name",
-      "message": "Name is required"
+      "field": "full_name",
+      "message": "full_name is required"
     }
   ],
   "trace_id": "trace-001"
 }
 ```
 
-### 1.5. Query params dùng lặp lại
-
-- `page`: số trang, mặc định `1`
-- `page_size`: số bản ghi mỗi trang, mặc định `20`
-- `q`: từ khóa tìm kiếm
-- `status`: trạng thái business
-- `from`: ngày bắt đầu, `YYYY-MM-DD`
-- `to`: ngày kết thúc, `YYYY-MM-DD`
-- `sort_by`: trường sắp xếp
-- `sort_dir`: `asc` hoặc `desc`
-
 ## 2. Auth
 
-### POST `/auth/login`
+Endpoints:
 
-- Query params: không có
-- Payload:
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/refresh-token`
+- `POST /auth/logout`
+- `POST /auth/forgot-password`
+- `POST /auth/reset-password`
+- `POST /auth/change-password`
+- `POST /auth/revoke-token`
+- `GET /auth/me`
+
+### POST `/auth/register`
+
+Request:
 
 ```json
 {
-  "username": "cashier01",
+  "code": "TENANT_ABC",
+  "name": "MasterCare ABC",
+  "store_code": "STORE_001",
+  "store_name": "MasterCare Quan 1",
+  "phone": "0900000001",
+  "email": "owner@mastercare.vn",
+  "address": "123 Tran Hung Dao, District 1, HCM",
+  "owner_username": "owner01",
+  "owner_password": "******",
+  "owner_full_name": "Nguyen Van Owner"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "success": true,
+  "message": "Tenant registered",
+  "data": {
+    "tenant": {
+      "id": "ten_001",
+      "code": "TENANT_ABC",
+      "name": "MasterCare ABC",
+      "is_active": true
+    },
+    "store": {
+      "id": "store_001",
+      "tenant_id": "ten_001",
+      "code": "STORE_001",
+      "name": "MasterCare Quan 1"
+    },
+    "owner_user": {
+      "id": "usr_001",
+      "tenant_id": "ten_001",
+      "store_id": "store_001",
+      "username": "owner01",
+      "full_name": "Nguyen Van Owner",
+      "is_active": true
+    }
+  },
+  "trace_id": "trace-auth-register-001"
+}
+```
+
+### POST `/auth/login`
+
+Params:
+
+- body:
+  - `login_id`
+  - `password`
+
+Request:
+
+```json
+{
+  "login_id": "cashier01",
   "password": "******"
 }
 ```
 
-- Response mẫu:
+Ghi chu:
+
+- `login_id` cho phep nhap `username | email | phone`.
+- He thong tim `users` theo `username`, hoac `LOWER(email)`, hoac `phone`.
+- Neu match bang `email` hoac `phone`, `tenant_id` duoc resolve tu chinh user record.
+- User khong can chon tenant trong login flow.
+
+Response `200`:
 
 ```json
 {
@@ -98,75 +222,95 @@ Content-Type: application/json
   "message": "Login success",
   "data": {
     "access_token": "jwt-access-token",
-    "refresh_token": "refresh-token",
+    "refresh_token": "refresh-token-001",
     "expires_in": 3600,
     "user": {
       "id": "usr_001",
+      "tenant_id": "ten_001",
+      "store_id": "store_001",
       "username": "cashier01",
-      "full_name": "Thu ngân 01",
+      "full_name": "Thu ngan 01",
+      "email": "cashier01@mastercare.vn",
+      "phone": "0900000002",
+      "is_active": true,
+      "last_login_at": "2026-04-12T09:30:00Z",
       "roles": ["Cashier"],
       "permissions": [
         "sales-channel.shifts.create",
-        "sales-channel.bills.create"
+        "sales-channel.bills.create",
+        "sales-channel.bill-items.create",
+        "sales-channel.payments.create"
       ]
     }
   },
-  "trace_id": "trace-login-001"
+  "trace_id": "trace-auth-login-001"
 }
 ```
 
 ### POST `/auth/refresh-token`
 
-- Payload:
+Request:
 
 ```json
 {
-  "refresh_token": "refresh-token"
+  "refresh_token": "refresh-token-001"
 }
 ```
 
-- Response mẫu:
+Response `200`:
 
 ```json
 {
   "success": true,
   "message": "Token refreshed",
   "data": {
-    "access_token": "new-jwt-access-token",
-    "refresh_token": "new-refresh-token",
+    "access_token": "jwt-access-token-new",
+    "refresh_token": "refresh-token-002",
     "expires_in": 3600
   },
-  "trace_id": "trace-refresh-001"
+  "trace_id": "trace-auth-refresh-001"
 }
 ```
 
-### POST `/auth/logout`
+### POST `/auth/forgot-password`
 
-- Payload:
+Request:
 
 ```json
 {
-  "refresh_token": "refresh-token"
+  "username": "cashier01"
 }
 ```
 
-- Response mẫu:
+### POST `/auth/reset-password`
+
+Request:
 
 ```json
 {
-  "success": true,
-  "message": "Logout success",
-  "data": {
-    "logged_out": true
-  },
-  "trace_id": "trace-logout-001"
+  "reset_token": "reset-token-001",
+  "new_password": "******"
+}
+```
+
+### POST `/auth/change-password`
+
+Request:
+
+```json
+{
+  "current_password": "******",
+  "new_password": "******"
 }
 ```
 
 ### GET `/auth/me`
 
-- Query params: không có
-- Response mẫu:
+Params:
+
+- query: `include=roles,permissions,store`
+
+Response `200`:
 
 ```json
 {
@@ -174,68 +318,61 @@ Content-Type: application/json
   "message": "Current user",
   "data": {
     "id": "usr_001",
+    "tenant_id": "ten_001",
+    "store_id": "store_001",
     "username": "cashier01",
-    "full_name": "Thu ngân 01",
-    "tenant_id": "tenant-demo",
-    "roles": ["Cashier"],
+    "full_name": "Thu ngan 01",
+    "email": "cashier01@mastercare.vn",
+    "phone": "0900000002",
+    "is_active": true,
+    "last_login_at": "2026-04-12T09:30:00Z",
+    "roles": [
+      {
+        "id": "role_001",
+        "code": "CASHIER",
+        "name": "Cashier"
+      }
+    ],
     "permissions": [
-      "sales-channel.shifts.read",
-      "sales-channel.bills.read"
+      "sales-channel.shifts.create",
+      "sales-channel.bills.create"
     ]
   },
-  "trace_id": "trace-me-001"
+  "trace_id": "trace-auth-me-001"
 }
 ```
 
-## 3. Users
+## 3. Identity And Access
 
-### GET `/users`
+### Users
 
-- Query params:
-  - `page`, `page_size`, `q`, `status`, `role_code`, `sort_by`, `sort_dir`
-- Response mẫu:
+Endpoints:
 
-```json
-{
-  "success": true,
-  "message": "User list",
-  "data": [
-    {
-      "id": "usr_001",
-      "username": "admin",
-      "full_name": "Quản trị hệ thống",
-      "phone": "0900000001",
-      "email": "admin@tenant.vn",
-      "is_active": true,
-      "roles": ["Admin"]
-    }
-  ],
-  "meta": {
-    "page": 1,
-    "page_size": 20,
-    "total": 1
-  },
-  "trace_id": "trace-users-001"
-}
-```
+- `GET /users`
+- `POST /users`
+- `GET /users/{id}`
+- `PATCH /users/{id}`
+- `POST /users/{id}/actions/activate`
+- `POST /users/{id}/actions/deactivate`
+- `POST /users/{id}/actions/reset-password`
 
 ### POST `/users`
 
-- Payload:
+Request:
 
 ```json
 {
-  "username": "cashier02",
-  "password": "******",
-  "full_name": "Thu ngân 02",
-  "phone": "0900000002",
-  "email": "cashier02@tenant.vn",
   "store_id": "store_001",
-  "role_ids": ["role_cashier"]
+  "username": "manager01",
+  "password": "******",
+  "full_name": "Store Manager",
+  "email": "manager01@mastercare.vn",
+  "phone": "0900000005",
+  "role_ids": ["role_002"]
 }
 ```
 
-- Response mẫu:
+Response `201`:
 
 ```json
 {
@@ -243,343 +380,99 @@ Content-Type: application/json
   "message": "User created",
   "data": {
     "id": "usr_002",
-    "username": "cashier02",
-    "full_name": "Thu ngân 02",
-    "is_active": true
-  },
-  "trace_id": "trace-user-create-001"
-}
-```
-
-### GET `/users/{id}`
-
-- Path params:
-  - `id`: user id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "User detail",
-  "data": {
-    "id": "usr_001",
-    "username": "admin",
-    "full_name": "Quản trị hệ thống",
-    "phone": "0900000001",
-    "email": "admin@tenant.vn",
+    "tenant_id": "ten_001",
+    "store_id": "store_001",
+    "username": "manager01",
+    "full_name": "Store Manager",
+    "email": "manager01@mastercare.vn",
+    "phone": "0900000005",
     "is_active": true,
-    "roles": [
-      {
-        "id": "role_admin",
-        "code": "ADMIN",
-        "name": "Admin"
-      }
-    ]
+    "created_at": "2026-04-12T10:00:00Z",
+    "updated_at": "2026-04-12T10:00:00Z"
   },
-  "trace_id": "trace-user-detail-001"
+  "trace_id": "trace-users-create-001"
 }
 ```
 
-### PATCH `/users/{id}`
+### Roles
 
-- Path params:
-  - `id`: user id
-- Payload:
+Endpoints:
 
-```json
-{
-  "full_name": "Quản trị cửa hàng",
-  "phone": "0900000099",
-  "email": "manager@tenant.vn",
-  "store_id": "store_001",
-  "role_ids": ["role_manager"]
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "User updated",
-  "data": {
-    "id": "usr_001",
-    "full_name": "Quản trị cửa hàng",
-    "phone": "0900000099",
-    "email": "manager@tenant.vn"
-  },
-  "trace_id": "trace-user-update-001"
-}
-```
-
-### POST `/users/{id}/actions/activate`
-
-- Path params:
-  - `id`: user id
-- Payload:
-
-```json
-{
-  "reason": "Mở lại tài khoản"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "User activated",
-  "data": {
-    "id": "usr_002",
-    "is_active": true
-  },
-  "trace_id": "trace-user-activate-001"
-}
-```
-
-### POST `/users/{id}/actions/deactivate`
-
-- Path params:
-  - `id`: user id
-- Payload:
-
-```json
-{
-  "reason": "Nhân viên nghỉ việc"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "User deactivated",
-  "data": {
-    "id": "usr_002",
-    "is_active": false
-  },
-  "trace_id": "trace-user-deactivate-001"
-}
-```
-
-### POST `/users/{id}/actions/reset-password`
-
-- Path params:
-  - `id`: user id
-- Payload:
-
-```json
-{
-  "new_password": "******",
-  "reason": "Reset theo yêu cầu người dùng"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Password reset success",
-  "data": {
-    "id": "usr_002",
-    "password_reset": true
-  },
-  "trace_id": "trace-user-reset-password-001"
-}
-```
-
-## 4. Roles / Permissions
-
-### GET `/roles`
-
-- Query params:
-  - `page`, `page_size`, `q`, `sort_by`, `sort_dir`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Role list",
-  "data": [
-    {
-      "id": "role_admin",
-      "code": "ADMIN",
-      "name": "Admin",
-      "permissions_count": 20
-    }
-  ],
-  "meta": {
-    "page": 1,
-    "page_size": 20,
-    "total": 1
-  },
-  "trace_id": "trace-roles-001"
-}
-```
+- `GET /roles`
+- `POST /roles`
+- `GET /roles/{id}`
+- `PATCH /roles/{id}`
 
 ### POST `/roles`
 
-- Payload:
+Request:
 
 ```json
 {
-  "code": "CASHIER",
-  "name": "Thu ngân",
-  "description": "Vai trò thu ngân",
+  "code": "STORE_MANAGER",
+  "name": "Store Manager",
+  "description": "Quan ly cua hang",
   "permission_codes": [
-    "sales-channel.shifts.create",
-    "sales-channel.bills.create",
-    "sales-channel.payments.create"
-  ]
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Role created",
-  "data": {
-    "id": "role_cashier",
-    "code": "CASHIER",
-    "name": "Thu ngân"
-  },
-  "trace_id": "trace-role-create-001"
-}
-```
-
-### GET `/roles/{id}`
-
-- Path params:
-  - `id`: role id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Role detail",
-  "data": {
-    "id": "role_cashier",
-    "code": "CASHIER",
-    "name": "Thu ngân",
-    "permission_codes": [
-      "sales-channel.shifts.create",
-      "sales-channel.bills.create",
-      "sales-channel.payments.create"
-    ]
-  },
-  "trace_id": "trace-role-detail-001"
-}
-```
-
-### PATCH `/roles/{id}`
-
-- Path params:
-  - `id`: role id
-- Payload:
-
-```json
-{
-  "name": "Thu ngân quầy",
-  "description": "Vai trò thu ngân tại quầy",
-  "permission_codes": [
-    "sales-channel.shifts.read",
-    "sales-channel.shifts.create",
     "sales-channel.bills.read",
-    "sales-channel.bills.create",
-    "sales-channel.payments.create"
+    "sales-channel.bills.cancel",
+    "inventory.purchase-orders.read"
   ]
 }
 ```
 
-- Response mẫu:
+### Permissions
+
+Endpoints:
+
+- `GET /permissions`
+
+Response `200`:
 
 ```json
 {
   "success": true,
-  "message": "Role updated",
-  "data": {
-    "id": "role_cashier",
-    "name": "Thu ngân quầy"
-  },
-  "trace_id": "trace-role-update-001"
-}
-```
-
-### GET `/permissions`
-
-- Query params:
-  - `page`, `page_size`, `q`, `module`, `sort_by`, `sort_dir`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Permission list",
+  "message": "Permissions",
   "data": [
     {
-      "code": "sales-channel.bills.create",
-      "name": "Create bills",
-      "description": "Create bills"
+      "id": "perm_001",
+      "code": "sales-channel.bills.read",
+      "name": "Read bills",
+      "description": "View bill list and detail"
     }
   ],
-  "meta": {
-    "page": 1,
-    "page_size": 20,
-    "total": 1
-  },
-  "trace_id": "trace-permissions-001"
+  "trace_id": "trace-permissions-list-001"
 }
 ```
 
-## 5. POS - Shifts
+## 4. POS
 
-### GET `/shifts`
+### Shifts
 
-- Query params:
-  - `page`, `page_size`, `status`, `user_id`, `from`, `to`
-- Response mẫu:
+Endpoints:
 
-```json
-{
-  "success": true,
-  "message": "Shift list",
-  "data": [
-    {
-      "id": "shift_001",
-      "user_id": "usr_002",
-      "opened_at": "2026-04-11T08:00:00Z",
-      "opening_cash": 500000,
-      "status": "OPEN"
-    }
-  ],
-  "meta": {
-    "page": 1,
-    "page_size": 20,
-    "total": 1
-  },
-  "trace_id": "trace-shifts-001"
-}
-```
+- `GET /shifts`
+- `POST /shifts`
+- `GET /shifts/{id}`
+- `PATCH /shifts/{id}`
+- `GET /shifts/current`
+- `GET /shifts/{id}/summary`
+- `POST /shifts/{id}/actions/close`
+- `POST /shifts/{id}/actions/reopen`
 
 ### POST `/shifts`
 
-- Payload:
+Request:
 
 ```json
 {
   "store_id": "store_001",
-  "device_id": "device_pos_001",
-  "opening_cash": 500000,
-  "note": "Mở ca sáng"
+  "employee_id": "emp_001",
+  "device_id": "dev_001",
+  "opening_cash": 500000
 }
 ```
 
-- Response mẫu:
+Response `201`:
 
 ```json
 {
@@ -587,202 +480,54 @@ Content-Type: application/json
   "message": "Shift opened",
   "data": {
     "id": "shift_001",
-    "status": "OPEN",
-    "opened_at": "2026-04-11T08:00:00Z"
-  },
-  "trace_id": "trace-shift-create-001"
-}
-```
-
-### GET `/shifts/{id}`
-
-- Path params:
-  - `id`: shift id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Shift detail",
-  "data": {
-    "id": "shift_001",
-    "user_id": "usr_002",
+    "tenant_id": "ten_001",
+    "store_id": "store_001",
+    "user_id": "usr_001",
+    "employee_id": "emp_001",
+    "device_id": "dev_001",
+    "opened_at": "2026-04-12T08:00:00Z",
     "opening_cash": 500000,
-    "closing_cash": null,
-    "expected_cash": 1200000,
     "status": "OPEN"
   },
-  "trace_id": "trace-shift-detail-001"
+  "trace_id": "trace-shifts-create-001"
 }
 ```
 
-### PATCH `/shifts/{id}`
+### Bills
 
-- Path params:
-  - `id`: shift id
-- Payload:
+Endpoints:
 
-```json
-{
-  "device_id": "device_pos_002",
-  "note": "Đổi máy POS"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Shift updated",
-  "data": {
-    "id": "shift_001",
-    "device_id": "device_pos_002"
-  },
-  "trace_id": "trace-shift-update-001"
-}
-```
-
-### GET `/shifts/current`
-
-- Query params: không có
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Current shift",
-  "data": {
-    "id": "shift_001",
-    "status": "OPEN",
-    "opened_at": "2026-04-11T08:00:00Z"
-  },
-  "trace_id": "trace-shift-current-001"
-}
-```
-
-### GET `/shifts/{id}/summary`
-
-- Path params:
-  - `id`: shift id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Shift summary",
-  "data": {
-    "shift_id": "shift_001",
-    "bill_count": 15,
-    "gross_sales": 12500000,
-    "paid_amount": 11800000,
-    "cash_in": 7000000,
-    "cash_out": 300000
-  },
-  "trace_id": "trace-shift-summary-001"
-}
-```
-
-### POST `/shifts/{id}/actions/close`
-
-- Path params:
-  - `id`: shift id
-- Payload:
-
-```json
-{
-  "closing_cash": 6800000,
-  "expected_cash": 7000000,
-  "close_note": "Đóng ca cuối ngày"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Shift closed",
-  "data": {
-    "id": "shift_001",
-    "status": "CLOSED",
-    "cash_difference": -200000
-  },
-  "trace_id": "trace-shift-close-001"
-}
-```
-
-### POST `/shifts/{id}/actions/reopen`
-
-- Path params:
-  - `id`: shift id
-- Payload:
-
-```json
-{
-  "reason": "Đóng nhầm ca"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Shift reopened",
-  "data": {
-    "id": "shift_001",
-    "status": "OPEN"
-  },
-  "trace_id": "trace-shift-reopen-001"
-}
-```
-
-## 6. POS - Bills
-
-### GET `/bills`
-
-- Query params:
-  - `page`, `page_size`, `q`, `status`, `payment_status`, `shift_id`, `customer_id`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Bill list",
-  "data": [
-    {
-      "id": "bill_001",
-      "bill_no": "POS-0001",
-      "status": "DRAFT",
-      "payment_status": "UNPAID",
-      "total_amount": 180000
-    }
-  ],
-  "meta": {
-    "page": 1,
-    "page_size": 20,
-    "total": 1
-  },
-  "trace_id": "trace-bills-001"
-}
-```
+- `GET /bills`
+- `POST /bills`
+- `GET /bills/{id}`
+- `PATCH /bills/{id}`
+- `POST /bills/{id}/items`
+- `PATCH /bills/{id}/items/{item_id}`
+- `DELETE /bills/{id}/items/{item_id}`
+- `GET /bills/{id}/payments`
+- `POST /bills/{id}/payments`
+- `POST /bills/{id}/actions/hold`
+- `POST /bills/{id}/actions/resume`
+- `POST /bills/{id}/actions/complete`
+- `POST /bills/{id}/actions/cancel`
+- `POST /bills/{id}/actions/discard`
+- `POST /bills/{id}/actions/reprint`
 
 ### POST `/bills`
 
-- Payload:
+Request:
 
 ```json
 {
-  "shift_id": "shift_001",
   "store_id": "store_001",
-  "warehouse_id": "warehouse_001",
-  "customer_id": null,
-  "note": "Bill tại quầy"
+  "warehouse_id": "wh_001",
+  "shift_id": "shift_001",
+  "customer_id": "cus_001",
+  "note": "Khach dat truoc"
 }
 ```
 
-- Response mẫu:
+Response `201`:
 
 ```json
 {
@@ -790,19 +535,44 @@ Content-Type: application/json
   "message": "Bill created",
   "data": {
     "id": "bill_001",
-    "bill_no": "POS-0001",
+    "tenant_id": "ten_001",
+    "store_id": "store_001",
+    "warehouse_id": "wh_001",
+    "shift_id": "shift_001",
+    "customer_id": "cus_001",
+    "cashier_user_id": "usr_001",
+    "bill_no": "BILL000001",
     "status": "DRAFT",
-    "payment_status": "UNPAID"
+    "payment_status": "UNPAID",
+    "subtotal": 0,
+    "discount_amount": 0,
+    "surcharge_amount": 0,
+    "tax_amount": 0,
+    "total_amount": 0,
+    "paid_amount": 0,
+    "change_amount": 0,
+    "note": "Khach dat truoc",
+    "held_at": null,
+    "held_expires_at": null,
+    "resumed_at": null,
+    "completed_at": null,
+    "canceled_at": null,
+    "discarded_at": null,
+    "created_at": "2026-04-12T08:10:00Z",
+    "updated_at": "2026-04-12T08:10:00Z"
   },
-  "trace_id": "trace-bill-create-001"
+  "trace_id": "trace-bills-create-001"
 }
 ```
 
 ### GET `/bills/{id}`
 
-- Path params:
-  - `id`: bill id
-- Response mẫu:
+Params:
+
+- path: `id`
+- query: `include=items,payments,customer`
+
+Response `200`:
 
 ```json
 {
@@ -810,541 +580,208 @@ Content-Type: application/json
   "message": "Bill detail",
   "data": {
     "id": "bill_001",
-    "bill_no": "POS-0001",
+    "tenant_id": "ten_001",
+    "store_id": "store_001",
+    "warehouse_id": "wh_001",
+    "shift_id": "shift_001",
+    "customer_id": "cus_001",
+    "cashier_user_id": "usr_001",
+    "bill_no": "BILL000001",
     "status": "DRAFT",
     "payment_status": "UNPAID",
-    "subtotal": 180000,
-    "total_amount": 180000,
+    "subtotal": 360000,
+    "discount_amount": 10000,
+    "surcharge_amount": 0,
+    "tax_amount": 0,
+    "total_amount": 350000,
+    "paid_amount": 0,
+    "change_amount": 0,
     "items": [
       {
-        "bill_item_id": "bill_item_001",
+        "id": "bi_001",
+        "tenant_id": "ten_001",
+        "bill_id": "bill_001",
         "product_id": "prd_001",
-        "product_name": "Áo thun",
-        "quantity": 1,
+        "line_no": 1,
+        "product_code": "SP000001",
+        "product_name": "Ao thun basic",
+        "unit_name": "Chiec",
+        "quantity": 2,
         "unit_price": 180000,
-        "line_total": 180000
+        "discount_amount": 10000,
+        "surcharge_amount": 0,
+        "line_total": 350000,
+        "note": null
       }
-    ]
+    ],
+    "payments": []
   },
-  "trace_id": "trace-bill-detail-001"
+  "trace_id": "trace-bills-detail-001"
 }
 ```
 
-### PATCH `/bills/{id}`
+### POST `/bills/{id}/items`
 
-- Path params:
-  - `id`: bill id
-- Payload:
-
-```json
-{
-  "note": "Khách yêu cầu xuất hóa đơn sau",
-  "customer_id": "cus_001"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Bill updated",
-  "data": {
-    "id": "bill_001",
-    "customer_id": "cus_001",
-    "note": "Khách yêu cầu xuất hóa đơn sau"
-  },
-  "trace_id": "trace-bill-update-001"
-}
-```
-
-### DELETE `/bills/{id}`
-
-- Path params:
-  - `id`: bill id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Bill deleted",
-  "data": {
-    "id": "bill_001",
-    "deleted": true
-  },
-  "trace_id": "trace-bill-delete-001"
-}
-```
-
-### POST `/bills/{id}/actions/add-item`
-
-- Path params:
-  - `id`: bill id
-- Payload:
+Request:
 
 ```json
 {
   "product_id": "prd_001",
   "quantity": 2,
   "unit_price": 180000,
-  "note": "Quét barcode"
+  "discount_amount": 10000,
+  "surcharge_amount": 0,
+  "note": null
 }
 ```
 
-- Response mẫu:
+Response `201`:
 
 ```json
 {
   "success": true,
-  "message": "Bill item added",
+  "message": "Bill item created",
   "data": {
+    "id": "bi_001",
+    "tenant_id": "ten_001",
     "bill_id": "bill_001",
-    "bill_item_id": "bill_item_001",
-    "subtotal": 360000,
-    "total_amount": 360000
+    "product_id": "prd_001",
+    "line_no": 1,
+    "product_code": "SP000001",
+    "product_name": "Ao thun basic",
+    "unit_name": "Chiec",
+    "quantity": 2,
+    "unit_price": 180000,
+    "discount_amount": 10000,
+    "surcharge_amount": 0,
+    "line_total": 350000,
+    "note": null
   },
-  "trace_id": "trace-bill-add-item-001"
+  "trace_id": "trace-bill-items-create-001"
 }
 ```
 
-### POST `/bills/{id}/actions/update-item`
+### POST `/bills/{id}/payments`
 
-- Path params:
-  - `id`: bill id
-- Payload:
+Request:
 
 ```json
 {
-  "bill_item_id": "bill_item_001",
-  "quantity": 3,
-  "unit_price": 170000,
-  "note": "Giá đặc biệt"
+  "payment_method": "CASH",
+  "amount": 350000,
+  "reference_no": null,
+  "note": "Khach tra tien mat"
 }
 ```
 
-- Response mẫu:
+Response `201`:
 
 ```json
 {
   "success": true,
-  "message": "Bill item updated",
+  "message": "Payment created",
   "data": {
-    "bill_item_id": "bill_item_001",
-    "quantity": 3,
-    "unit_price": 170000,
-    "line_total": 510000
-  },
-  "trace_id": "trace-bill-update-item-001"
-}
-```
-
-### POST `/bills/{id}/actions/remove-item`
-
-- Path params:
-  - `id`: bill id
-- Payload:
-
-```json
-{
-  "bill_item_id": "bill_item_001",
-  "reason": "Khách bỏ sản phẩm"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Bill item removed",
-  "data": {
+    "id": "pay_001",
+    "tenant_id": "ten_001",
     "bill_id": "bill_001",
-    "bill_item_id": "bill_item_001",
-    "subtotal": 0,
-    "total_amount": 0
+    "status": "ACTIVE",
+    "payment_method": "CASH",
+    "amount": 350000,
+    "reference_no": null,
+    "paid_at": "2026-04-12T08:45:00Z",
+    "note": "Khach tra tien mat"
   },
-  "trace_id": "trace-bill-remove-item-001"
-}
-```
-
-### POST `/bills/{id}/actions/attach-customer`
-
-- Path params:
-  - `id`: bill id
-- Payload:
-
-```json
-{
-  "customer_id": "cus_001"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Customer attached",
-  "data": {
-    "bill_id": "bill_001",
-    "customer_id": "cus_001"
-  },
-  "trace_id": "trace-bill-attach-customer-001"
-}
-```
-
-### POST `/bills/{id}/actions/apply-adjustment`
-
-- Path params:
-  - `id`: bill id
-- Payload:
-
-```json
-{
-  "adjustment_type": "DISCOUNT",
-  "scope": "BILL",
-  "value_type": "AMOUNT",
-  "value": 50000,
-  "reason": "Khuyến mãi tại quầy"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Adjustment applied",
-  "data": {
-    "bill_id": "bill_001",
-    "discount_amount": 50000,
-    "total_amount": 310000
-  },
-  "trace_id": "trace-bill-adjustment-001"
+  "trace_id": "trace-payments-create-001"
 }
 ```
 
 ### POST `/bills/{id}/actions/hold`
 
-- Path params:
-  - `id`: bill id
-- Payload:
-
-```json
-{
-  "reason": "Khách tạm rời quầy"
-}
-```
-
-- Response mẫu:
+Response `200`:
 
 ```json
 {
   "success": true,
   "message": "Bill held",
   "data": {
-    "bill_id": "bill_001",
-    "status": "HELD"
+    "id": "bill_001",
+    "status": "HELD",
+    "held_at": "2026-04-12T08:20:00Z",
+    "held_expires_at": "2026-04-13T08:20:00Z"
   },
-  "trace_id": "trace-bill-hold-001"
-}
-```
-
-### POST `/bills/{id}/actions/resume`
-
-- Path params:
-  - `id`: bill id
-- Payload:
-
-```json
-{
-  "reason": "Khách quay lại quầy"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Bill resumed",
-  "data": {
-    "bill_id": "bill_001",
-    "status": "DRAFT"
-  },
-  "trace_id": "trace-bill-resume-001"
+  "trace_id": "trace-bills-hold-001"
 }
 ```
 
 ### POST `/bills/{id}/actions/complete`
 
-- Path params:
-  - `id`: bill id
-- Payload:
-
-```json
-{
-  "note": "Hoàn tất bill",
-  "auto_print": true
-}
-```
-
-- Response mẫu:
+Response `200`:
 
 ```json
 {
   "success": true,
   "message": "Bill completed",
   "data": {
-    "bill_id": "bill_001",
+    "id": "bill_001",
     "status": "COMPLETED",
     "payment_status": "PAID",
-    "completed_at": "2026-04-11T08:30:00Z"
+    "total_amount": 350000,
+    "paid_amount": 350000,
+    "change_amount": 0,
+    "completed_at": "2026-04-12T08:46:00Z"
   },
-  "trace_id": "trace-bill-complete-001"
+  "trace_id": "trace-bills-complete-001"
 }
 ```
 
 ### POST `/bills/{id}/actions/cancel`
 
-- Path params:
-  - `id`: bill id
-- Payload:
+Request:
 
 ```json
 {
-  "reason": "Khách không mua nữa"
+  "canceled_reason": "Nhap sai san pham"
 }
 ```
 
-- Response mẫu:
+### Returns
 
-```json
-{
-  "success": true,
-  "message": "Bill canceled",
-  "data": {
-    "bill_id": "bill_001",
-    "status": "CANCELED"
-  },
-  "trace_id": "trace-bill-cancel-001"
-}
-```
+Endpoints:
 
-### POST `/bills/{id}/actions/reprint`
-
-- Path params:
-  - `id`: bill id
-- Payload:
-
-```json
-{
-  "reason": "Khách làm mất hóa đơn"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Bill reprinted",
-  "data": {
-    "bill_id": "bill_001",
-    "reprinted": true
-  },
-  "trace_id": "trace-bill-reprint-001"
-}
-```
-
-## 7. Payments
-
-### GET `/payments`
-
-- Query params:
-  - `page`, `page_size`, `bill_id`, `method`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payment list",
-  "data": [
-    {
-      "id": "pay_001",
-      "bill_id": "bill_001",
-      "method": "CASH",
-      "amount": 180000,
-      "paid_at": "2026-04-11T08:28:00Z"
-    }
-  ],
-  "meta": {
-    "page": 1,
-    "page_size": 20,
-    "total": 1
-  },
-  "trace_id": "trace-payments-001"
-}
-```
-
-### POST `/payments`
-
-- Payload:
-
-```json
-{
-  "bill_id": "bill_001",
-  "items": [
-    { "method": "CASH", "amount": 100000 },
-    { "method": "BANK_TRANSFER", "amount": 80000, "reference_no": "FT001" }
-  ],
-  "note": "Khách thanh toán đủ"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payments created",
-  "data": {
-    "bill_id": "bill_001",
-    "paid_amount": 180000,
-    "payment_status": "PAID"
-  },
-  "trace_id": "trace-payment-create-001"
-}
-```
-
-### GET `/payments/{id}`
-
-- Path params:
-  - `id`: payment id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payment detail",
-  "data": {
-    "id": "pay_001",
-    "bill_id": "bill_001",
-    "method": "CASH",
-    "amount": 100000,
-    "reference_no": null
-  },
-  "trace_id": "trace-payment-detail-001"
-}
-```
-
-### GET `/bills/{id}/payments`
-
-- Path params:
-  - `id`: bill id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Bill payments",
-  "data": [
-    {
-      "id": "pay_001",
-      "method": "CASH",
-      "amount": 100000
-    },
-    {
-      "id": "pay_002",
-      "method": "BANK_TRANSFER",
-      "amount": 80000
-    }
-  ],
-  "trace_id": "trace-bill-payments-001"
-}
-```
-
-### POST `/bills/{id}/payments`
-
-- Path params:
-  - `id`: bill id
-- Payload:
-
-```json
-{
-  "items": [
-    { "method": "CASH", "amount": 100000 },
-    { "method": "BANK_TRANSFER", "amount": 80000, "reference_no": "FT001" }
-  ],
-  "note": "Thanh toán từ màn hình bill"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Bill payments created",
-  "data": {
-    "bill_id": "bill_001",
-    "paid_amount": 180000,
-    "payment_status": "PAID"
-  },
-  "trace_id": "trace-bill-payment-create-001"
-}
-```
-
-## 8. Returns / Exchanges
-
-### GET `/returns`
-
-- Query params:
-  - `page`, `page_size`, `type`, `status`, `original_bill_id`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Return list",
-  "data": [
-    {
-      "id": "ret_001",
-      "type": "RETURN",
-      "status": "DRAFT",
-      "original_bill_id": "bill_001",
-      "total_return_amount": 180000
-    }
-  ],
-  "meta": {
-    "page": 1,
-    "page_size": 20,
-    "total": 1
-  },
-  "trace_id": "trace-returns-001"
-}
-```
+- `GET /returns`
+- `POST /returns`
+- `GET /returns/{id}`
+- `PATCH /returns/{id}`
+- `POST /returns/{id}/actions/complete`
+- `POST /returns/{id}/actions/cancel`
 
 ### POST `/returns`
 
-- Payload:
+Request:
 
 ```json
 {
-  "type": "RETURN",
+  "return_type": "RETURN",
   "original_bill_id": "bill_001",
+  "customer_id": "cus_001",
+  "shift_id": "shift_001",
+  "cashier_user_id": "usr_001",
+  "refund_amount": 180000,
+  "note": "Tra hang loi san pham",
   "items": [
     {
-      "original_bill_item_id": "bill_item_001",
+      "original_bill_item_id": "bi_001",
+      "product_id": "prd_001",
       "quantity": 1,
-      "reason": "Lỗi sản phẩm"
+      "unit_price": 180000,
+      "line_total": 180000,
+      "reason": "Loi san pham"
     }
-  ],
-  "note": "Khách trả hàng"
+  ]
 }
 ```
 
-- Response mẫu:
+Response `201`:
 
 ```json
 {
@@ -1352,168 +789,63 @@ Content-Type: application/json
   "message": "Return created",
   "data": {
     "id": "ret_001",
-    "type": "RETURN",
-    "status": "DRAFT"
-  },
-  "trace_id": "trace-return-create-001"
-}
-```
-
-### GET `/returns/{id}`
-
-- Path params:
-  - `id`: return id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Return detail",
-  "data": {
-    "id": "ret_001",
-    "type": "RETURN",
+    "tenant_id": "ten_001",
+    "return_type": "RETURN",
+    "original_bill_id": "bill_001",
+    "return_no": "RET000001",
+    "customer_id": "cus_001",
+    "shift_id": "shift_001",
+    "cashier_user_id": "usr_001",
     "status": "DRAFT",
+    "total_return_amount": 180000,
     "refund_amount": 180000,
-    "items": [
-      {
-        "product_id": "prd_001",
-        "quantity": 1,
-        "line_total": 180000
-      }
-    ]
+    "note": "Tra hang loi san pham"
   },
-  "trace_id": "trace-return-detail-001"
+  "trace_id": "trace-returns-create-001"
 }
 ```
 
-### PATCH `/returns/{id}`
+## 5. Customers
 
-- Path params:
-  - `id`: return id
-- Payload:
+### Customers
 
-```json
-{
-  "note": "Cập nhật lý do trả hàng"
-}
-```
+Endpoints:
 
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Return updated",
-  "data": {
-    "id": "ret_001",
-    "note": "Cập nhật lý do trả hàng"
-  },
-  "trace_id": "trace-return-update-001"
-}
-```
-
-### POST `/returns/{id}/actions/complete`
-
-- Path params:
-  - `id`: return id
-- Payload:
-
-```json
-{
-  "refund_amount": 180000,
-  "note": "Hoàn tất trả hàng"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Return completed",
-  "data": {
-    "id": "ret_001",
-    "status": "COMPLETED"
-  },
-  "trace_id": "trace-return-complete-001"
-}
-```
-
-### POST `/returns/{id}/actions/cancel`
-
-- Path params:
-  - `id`: return id
-- Payload:
-
-```json
-{
-  "reason": "Nhập nhầm phiếu trả"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Return canceled",
-  "data": {
-    "id": "ret_001",
-    "status": "CANCELED"
-  },
-  "trace_id": "trace-return-cancel-001"
-}
-```
-
-## 9. Customers
-
-### GET `/customers`
-
-- Query params:
-  - `page`, `page_size`, `q`, `status`, `phone`, `sort_by`, `sort_dir`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Customer list",
-  "data": [
-    {
-      "id": "cus_001",
-      "code": "CUS0001",
-      "full_name": "Nguyễn Thị B",
-      "phone": "0900000003",
-      "debt_balance": 300000,
-      "is_active": true
-    }
-  ],
-  "meta": {
-    "page": 1,
-    "page_size": 20,
-    "total": 1
-  },
-  "trace_id": "trace-customers-001"
-}
-```
+- `GET /customers`
+- `POST /customers`
+- `GET /customers/{id}`
+- `PATCH /customers/{id}`
+- `GET /customers/{id}/purchase-history`
+- `GET /customers/{id}/statistics`
+- `GET /customers/{id}/debt-summary`
+- `GET /customers/{id}/debt-transactions`
+- `POST /customers/{id}/actions/activate`
+- `POST /customers/{id}/actions/deactivate`
 
 ### POST `/customers`
 
-- Payload:
+Request:
 
 ```json
 {
+  "store_id": "store_001",
   "code": "CUS0001",
-  "full_name": "Nguyễn Thị B",
+  "group_id": "cg_001",
+  "full_name": "Nguyen Thi B",
+  "customer_type": "INDIVIDUAL",
   "phone": "0900000003",
-  "email": "khachb@gmail.com",
+  "email": "b@example.com",
   "gender": "FEMALE",
-  "birthday": "1995-08-10",
-  "address": "Hà Nội",
-  "note": "Khách thân thiết"
+  "birthday": "1995-05-20",
+  "address_line": "123 Tran Hung Dao",
+  "ward": "Ward 1",
+  "district": "District 1",
+  "city": "HCM",
+  "note": "Khach hang than thiet"
 }
 ```
 
-- Response mẫu:
+Response `201`:
 
 ```json
 {
@@ -1521,497 +853,231 @@ Content-Type: application/json
   "message": "Customer created",
   "data": {
     "id": "cus_001",
+    "tenant_id": "ten_001",
+    "store_id": "store_001",
     "code": "CUS0001",
-    "full_name": "Nguyễn Thị B"
-  },
-  "trace_id": "trace-customer-create-001"
-}
-```
-
-### GET `/customers/{id}`
-
-- Path params:
-  - `id`: customer id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Customer detail",
-  "data": {
-    "id": "cus_001",
-    "code": "CUS0001",
-    "full_name": "Nguyễn Thị B",
+    "group_id": "cg_001",
+    "full_name": "Nguyen Thi B",
+    "customer_type": "INDIVIDUAL",
+    "company_name": null,
+    "tax_code": null,
     "phone": "0900000003",
-    "total_spent": 5000000,
-    "debt_balance": 300000
-  },
-  "trace_id": "trace-customer-detail-001"
-}
-```
-
-### PATCH `/customers/{id}`
-
-- Path params:
-  - `id`: customer id
-- Payload:
-
-```json
-{
-  "phone": "0900000098",
-  "address": "Đà Nẵng",
-  "note": "Đổi địa chỉ"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Customer updated",
-  "data": {
-    "id": "cus_001",
-    "phone": "0900000098",
-    "address": "Đà Nẵng"
-  },
-  "trace_id": "trace-customer-update-001"
-}
-```
-
-### GET `/customers/{id}/purchase-history`
-
-- Path params:
-  - `id`: customer id
-- Query params:
-  - `page`, `page_size`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Customer purchase history",
-  "data": [
-    {
-      "bill_id": "bill_001",
-      "bill_no": "POS-0001",
-      "total_amount": 180000,
-      "completed_at": "2026-04-11T08:30:00Z"
-    }
-  ],
-  "trace_id": "trace-customer-history-001"
-}
-```
-
-### GET `/customers/{id}/debt-summary`
-
-- Path params:
-  - `id`: customer id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Customer debt summary",
-  "data": {
-    "customer_id": "cus_001",
-    "debt_balance": 300000,
-    "total_increase": 1300000,
-    "total_payment": 1000000
-  },
-  "trace_id": "trace-customer-debt-summary-001"
-}
-```
-
-### GET `/customers/{id}/debt-transactions`
-
-- Path params:
-  - `id`: customer id
-- Query params:
-  - `page`, `page_size`, `type`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Customer debt transactions",
-  "data": [
-    {
-      "id": "cdt_001",
-      "type": "PAYMENT",
-      "amount": 300000,
-      "source_document_type": "cash_transaction"
-    }
-  ],
-  "trace_id": "trace-customer-debt-transactions-001"
-}
-```
-
-### POST `/customers/{id}/actions/activate`
-
-- Path params:
-  - `id`: customer id
-- Payload:
-
-```json
-{
-  "reason": "Mở lại hồ sơ khách"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Customer activated",
-  "data": {
-    "id": "cus_001",
+    "email": "b@example.com",
+    "gender": "FEMALE",
+    "birthday": "1995-05-20",
+    "address_line": "123 Tran Hung Dao",
+    "ward": "Ward 1",
+    "district": "District 1",
+    "city": "HCM",
+    "debt_balance": 0,
+    "total_spent": 0,
     "is_active": true
   },
-  "trace_id": "trace-customer-activate-001"
+  "trace_id": "trace-customers-create-001"
 }
 ```
 
-### POST `/customers/{id}/actions/deactivate`
+### GET `/customers/{id}/statistics`
 
-- Path params:
-  - `id`: customer id
-- Payload:
-
-```json
-{
-  "reason": "Khách yêu cầu ngưng lưu thông tin"
-}
-```
-
-- Response mẫu:
+Response `200`:
 
 ```json
 {
   "success": true,
-  "message": "Customer deactivated",
+  "message": "Customer statistics",
   "data": {
-    "id": "cus_001",
-    "is_active": false
+    "customer_id": "cus_001",
+    "total_invoices": 45,
+    "total_purchase_amount": 15000000,
+    "total_return_amount": 500000,
+    "net_purchase_amount": 14500000,
+    "last_purchase_at": "2026-04-10T15:30:00Z"
   },
-  "trace_id": "trace-customer-deactivate-001"
+  "trace_id": "trace-customer-statistics-001"
 }
 ```
 
-## 10. Customer Debt Transactions
+### Customer Groups
 
-### GET `/customer-debt-transactions`
+Endpoints:
 
-- Query params:
-  - `page`, `page_size`, `customer_id`, `type`, `from`, `to`
-- Response mẫu:
+- `GET /customer-groups`
+- `POST /customer-groups`
+- `GET /customer-groups/{id}`
+- `PATCH /customer-groups/{id}`
+- `DELETE /customer-groups/{id}`
+
+### POST `/customer-groups`
+
+Request:
 
 ```json
 {
-  "success": true,
-  "message": "Customer debt transaction list",
-  "data": [
-    {
-      "id": "cdt_001",
-      "customer_id": "cus_001",
-      "type": "PAYMENT",
-      "amount": 300000
-    }
-  ],
-  "trace_id": "trace-cdt-list-001"
+  "code": "VIP",
+  "name": "VIP",
+  "description": "Khach mua nhieu"
 }
 ```
+
+### Customer Debt Transactions
+
+Endpoints:
+
+- `GET /customer-debt-transactions`
+- `POST /customer-debt-transactions`
+- `GET /customer-debt-transactions/{id}`
 
 ### POST `/customer-debt-transactions`
 
-- Payload:
+Request:
 
 ```json
 {
   "customer_id": "cus_001",
-  "type": "PAYMENT",
+  "txn_type": "PAYMENT",
   "amount": 300000,
   "source_document_type": "cash_transaction",
   "source_document_id": "ctx_001",
-  "note": "Thu nợ khách"
+  "note": "Thu no khach"
 }
 ```
 
-- Response mẫu:
+## 6. Catalog
 
-```json
-{
-  "success": true,
-  "message": "Customer debt transaction created",
-  "data": {
-    "id": "cdt_001",
-    "customer_id": "cus_001",
-    "type": "PAYMENT",
-    "amount": 300000
-  },
-  "trace_id": "trace-cdt-create-001"
-}
-```
+### Categories
 
-### GET `/customer-debt-transactions/{id}`
+Endpoints:
 
-- Path params:
-  - `id`: debt transaction id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Customer debt transaction detail",
-  "data": {
-    "id": "cdt_001",
-    "customer_id": "cus_001",
-    "type": "PAYMENT",
-    "amount": 300000,
-    "source_document_type": "cash_transaction",
-    "source_document_id": "ctx_001"
-  },
-  "trace_id": "trace-cdt-detail-001"
-}
-```
-
-## 11. Catalog
-
-### GET `/categories`
-
-- Query params:
-  - `page`, `page_size`, `q`, `status`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Category list",
-  "data": [
-    {
-      "id": "cat_001",
-      "code": "AO",
-      "name": "Áo",
-      "is_active": true
-    }
-  ],
-  "trace_id": "trace-categories-001"
-}
-```
+- `GET /categories`
+- `POST /categories`
+- `GET /categories/{id}`
+- `PATCH /categories/{id}`
+- `DELETE /categories/{id}`
 
 ### POST `/categories`
 
-- Payload:
+Request:
 
 ```json
 {
-  "code": "AO",
-  "name": "Áo",
   "parent_id": null,
-  "sort_order": 1
+  "code": "FASHION",
+  "name": "Thoi trang",
+  "sort_order": 1,
+  "is_active": true
 }
 ```
 
-- Response mẫu:
+### Units
 
-```json
-{
-  "success": true,
-  "message": "Category created",
-  "data": {
-    "id": "cat_001",
-    "code": "AO",
-    "name": "Áo"
-  },
-  "trace_id": "trace-category-create-001"
-}
-```
+Endpoints:
 
-### GET `/categories/{id}`
-
-- Path params:
-  - `id`: category id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Category detail",
-  "data": {
-    "id": "cat_001",
-    "code": "AO",
-    "name": "Áo",
-    "parent_id": null
-  },
-  "trace_id": "trace-category-detail-001"
-}
-```
-
-### PATCH `/categories/{id}`
-
-- Path params:
-  - `id`: category id
-- Payload:
-
-```json
-{
-  "name": "Áo thời trang",
-  "sort_order": 2
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Category updated",
-  "data": {
-    "id": "cat_001",
-    "name": "Áo thời trang"
-  },
-  "trace_id": "trace-category-update-001"
-}
-```
-
-### GET `/units`
-
-- Query params:
-  - `page`, `page_size`, `q`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Unit list",
-  "data": [
-    {
-      "id": "unit_001",
-      "code": "CAI",
-      "name": "Cái"
-    }
-  ],
-  "trace_id": "trace-units-001"
-}
-```
+- `GET /units`
+- `POST /units`
+- `GET /units/{id}`
+- `PATCH /units/{id}`
+- `DELETE /units/{id}`
 
 ### POST `/units`
 
-- Payload:
+Request:
 
 ```json
 {
-  "code": "CAI",
-  "name": "Cái",
-  "description": "Đơn vị cái"
+  "code": "PIECE",
+  "name": "Chiec",
+  "description": "Don vi tinh mac dinh"
 }
 ```
 
-- Response mẫu:
+### Brands
+
+Endpoints:
+
+- `GET /brands`
+- `POST /brands`
+- `GET /brands/{id}`
+- `PATCH /brands/{id}`
+- `DELETE /brands/{id}`
+
+### POST `/brands`
+
+Request:
 
 ```json
 {
-  "success": true,
-  "message": "Unit created",
-  "data": {
-    "id": "unit_001",
-    "code": "CAI",
-    "name": "Cái"
-  },
-  "trace_id": "trace-unit-create-001"
+  "code": "NIKE",
+  "name": "Nike",
+  "description": "Thuong hieu Nike",
+  "is_active": true
 }
 ```
 
-### GET `/units/{id}`
+### Product Attributes
 
-- Path params:
-  - `id`: unit id
-- Response mẫu:
+Endpoints:
+
+- `GET /product-attributes`
+- `POST /product-attributes`
+- `GET /product-attributes/{id}`
+- `PATCH /product-attributes/{id}`
+
+### POST `/product-attributes`
+
+Request:
 
 ```json
 {
-  "success": true,
-  "message": "Unit detail",
-  "data": {
-    "id": "unit_001",
-    "code": "CAI",
-    "name": "Cái"
-  },
-  "trace_id": "trace-unit-detail-001"
+  "code": "SIZE",
+  "name": "Kich thuoc",
+  "value_type": "TEXT",
+  "options_json": ["S", "M", "L", "XL"],
+  "is_variant_defining": true,
+  "is_active": true
 }
 ```
 
-### PATCH `/units/{id}`
+### Products
 
-- Path params:
-  - `id`: unit id
-- Payload:
+Endpoints:
 
-```json
-{
-  "name": "Chiếc"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Unit updated",
-  "data": {
-    "id": "unit_001",
-    "name": "Chiếc"
-  },
-  "trace_id": "trace-unit-update-001"
-}
-```
-
-### GET `/products`
-
-- Query params:
-  - `page`, `page_size`, `q`, `status`, `category_id`, `barcode`, `sort_by`, `sort_dir`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Product list",
-  "data": [
-    {
-      "id": "prd_001",
-      "code": "PRD0001",
-      "sku": "SKU0001",
-      "barcode": "893000000001",
-      "name": "Áo thun",
-      "sell_price": 180000,
-      "is_active": true
-    }
-  ],
-  "trace_id": "trace-products-001"
-}
-```
+- `GET /products`
+- `POST /products`
+- `GET /products/{id}`
+- `PATCH /products/{id}`
+- `POST /products/{id}/actions/activate`
+- `POST /products/{id}/actions/deactivate`
+- `GET /products/{id}/prices`
+- `POST /products/{id}/prices`
+- `PATCH /products/{id}/prices/{price_id}`
+- `GET /products/{id}/variants`
+- `POST /products/{id}/variants`
+- `GET /product-variants/{id}`
+- `PATCH /product-variants/{id}`
 
 ### POST `/products`
 
-- Payload:
+Request:
 
 ```json
 {
-  "code": "PRD0001",
-  "sku": "SKU0001",
-  "barcode": "893000000001",
-  "name": "Áo thun",
   "category_id": "cat_001",
+  "brand_id": "brand_001",
   "unit_id": "unit_001",
-  "cost_price": 100000,
+  "code": "SP000001",
+  "sku": "SKU000001",
+  "barcode": "8931234567890",
+  "name": "Ao thun basic",
+  "description": "Ao thun co ban",
+  "cost_price": 120000,
   "sell_price": 180000,
+  "has_variants": true,
+  "is_active": true,
   "allow_negative_stock": false
 }
 ```
 
-- Response mẫu:
+Response `201`:
 
 ```json
 {
@@ -2019,333 +1085,89 @@ Content-Type: application/json
   "message": "Product created",
   "data": {
     "id": "prd_001",
-    "code": "PRD0001",
-    "name": "Áo thun"
-  },
-  "trace_id": "trace-product-create-001"
-}
-```
-
-### GET `/products/{id}`
-
-- Path params:
-  - `id`: product id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Product detail",
-  "data": {
-    "id": "prd_001",
-    "code": "PRD0001",
-    "sku": "SKU0001",
-    "name": "Áo thun",
+    "tenant_id": "ten_001",
     "category_id": "cat_001",
+    "brand_id": "brand_001",
     "unit_id": "unit_001",
-    "cost_price": 100000,
-    "sell_price": 180000
+    "code": "SP000001",
+    "sku": "SKU000001",
+    "barcode": "8931234567890",
+    "name": "Ao thun basic",
+    "cost_price": 120000,
+    "sell_price": 180000,
+    "has_variants": true,
+    "is_active": true,
+    "allow_negative_stock": false
   },
-  "trace_id": "trace-product-detail-001"
-}
-```
-
-### PATCH `/products/{id}`
-
-- Path params:
-  - `id`: product id
-- Payload:
-
-```json
-{
-  "name": "Áo thun cotton",
-  "sell_price": 190000,
-  "note": "Cập nhật giá"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Product updated",
-  "data": {
-    "id": "prd_001",
-    "name": "Áo thun cotton",
-    "sell_price": 190000
-  },
-  "trace_id": "trace-product-update-001"
-}
-```
-
-### POST `/products/{id}/actions/activate`
-
-- Path params:
-  - `id`: product id
-- Payload:
-
-```json
-{
-  "reason": "Mở bán lại"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Product activated",
-  "data": {
-    "id": "prd_001",
-    "is_active": true
-  },
-  "trace_id": "trace-product-activate-001"
-}
-```
-
-### POST `/products/{id}/actions/deactivate`
-
-- Path params:
-  - `id`: product id
-- Payload:
-
-```json
-{
-  "reason": "Ngưng kinh doanh"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Product deactivated",
-  "data": {
-    "id": "prd_001",
-    "is_active": false
-  },
-  "trace_id": "trace-product-deactivate-001"
-}
-```
-
-### GET `/products/{id}/prices`
-
-- Path params:
-  - `id`: product id
-- Query params:
-  - `page`, `page_size`, `is_active`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Product prices",
-  "data": [
-    {
-      "id": "price_001",
-      "price_type": "DEFAULT",
-      "price": 190000,
-      "effective_from": null,
-      "effective_to": null,
-      "is_active": true
-    }
-  ],
-  "trace_id": "trace-product-prices-001"
+  "trace_id": "trace-products-create-001"
 }
 ```
 
 ### POST `/products/{id}/prices`
 
-- Path params:
-  - `id`: product id
-- Payload:
+Request:
 
 ```json
 {
   "price_type": "DEFAULT",
-  "price": 190000,
+  "price": 180000,
   "effective_from": null,
-  "effective_to": null
+  "effective_to": null,
+  "is_active": true
 }
 ```
 
-- Response mẫu:
+### POST `/products/{id}/variants`
+
+Request:
 
 ```json
 {
-  "success": true,
-  "message": "Product price created",
-  "data": {
-    "id": "price_001",
-    "product_id": "prd_001",
-    "price": 190000
+  "sku": "AO-TRANG-L",
+  "barcode": "8931234567001",
+  "name": "Ao thun basic trang L",
+  "attribute_values": {
+    "color": "White",
+    "size": "L"
   },
-  "trace_id": "trace-product-price-create-001"
+  "cost_price": 120000,
+  "sell_price": 180000,
+  "is_active": true
 }
 ```
 
-### PATCH `/product-prices/{id}`
+## 7. Inventory And Purchasing
 
-- Path params:
-  - `id`: product price id
-- Payload:
+### Warehouses
 
-```json
-{
-  "price": 195000,
-  "effective_to": "2026-04-30T23:59:59Z"
-}
-```
+Endpoints:
 
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Product price updated",
-  "data": {
-    "id": "price_001",
-    "price": 195000
-  },
-  "trace_id": "trace-product-price-update-001"
-}
-```
-
-### POST `/products/{id}/actions/set-price`
-
-- Path params:
-  - `id`: product id
-- Payload:
-
-```json
-{
-  "price_type": "DEFAULT",
-  "price": 195000,
-  "effective_from": null,
-  "effective_to": null
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Product price set",
-  "data": {
-    "product_id": "prd_001",
-    "current_price": 195000
-  },
-  "trace_id": "trace-product-set-price-001"
-}
-```
-
-## 12. Inventory
-
-### GET `/warehouses`
-
-- Query params:
-  - `page`, `page_size`, `q`, `status`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Warehouse list",
-  "data": [
-    {
-      "id": "wh_001",
-      "code": "KHO-CHINH",
-      "name": "Kho chính",
-      "is_active": true
-    }
-  ],
-  "trace_id": "trace-warehouses-001"
-}
-```
+- `GET /warehouses`
+- `POST /warehouses`
+- `GET /warehouses/{id}`
+- `PATCH /warehouses/{id}`
 
 ### POST `/warehouses`
 
-- Payload:
+Request:
 
 ```json
 {
-  "code": "KHO-CHINH",
-  "name": "Kho chính",
-  "address": "123 Nguyễn Trãi"
+  "store_id": "store_001",
+  "code": "WH001",
+  "name": "Kho tong",
+  "address": "123 Tran Hung Dao",
+  "is_active": true
 }
 ```
 
-- Response mẫu:
+### Stock Levels
 
-```json
-{
-  "success": true,
-  "message": "Warehouse created",
-  "data": {
-    "id": "wh_001",
-    "code": "KHO-CHINH",
-    "name": "Kho chính"
-  },
-  "trace_id": "trace-warehouse-create-001"
-}
-```
+Endpoints:
 
-### GET `/warehouses/{id}`
+- `GET /stock-levels`
 
-- Path params:
-  - `id`: warehouse id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Warehouse detail",
-  "data": {
-    "id": "wh_001",
-    "code": "KHO-CHINH",
-    "name": "Kho chính",
-    "address": "123 Nguyễn Trãi"
-  },
-  "trace_id": "trace-warehouse-detail-001"
-}
-```
-
-### PATCH `/warehouses/{id}`
-
-- Path params:
-  - `id`: warehouse id
-- Payload:
-
-```json
-{
-  "name": "Kho tổng",
-  "address": "45 Trần Phú"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Warehouse updated",
-  "data": {
-    "id": "wh_001",
-    "name": "Kho tổng"
-  },
-  "trace_id": "trace-warehouse-update-001"
-}
-```
-
-### GET `/stock-levels`
-
-- Query params:
-  - `page`, `page_size`, `warehouse_id`, `product_id`, `q`
-- Response mẫu:
+Response `200`:
 
 ```json
 {
@@ -2353,338 +1175,265 @@ Content-Type: application/json
   "message": "Stock levels",
   "data": [
     {
+      "tenant_id": "ten_001",
       "warehouse_id": "wh_001",
       "product_id": "prd_001",
-      "product_name": "Áo thun",
-      "quantity": 50,
-      "reserved_quantity": 0
+      "quantity": 120,
+      "reserved_quantity": 10,
+      "updated_at": "2026-04-12T11:10:00Z"
     }
   ],
-  "trace_id": "trace-stock-levels-001"
+  "trace_id": "trace-stock-levels-list-001"
 }
 ```
 
-### GET `/stock-levels/{warehouse_id}/{product_id}`
+### Stock Transactions
 
-- Path params:
-  - `warehouse_id`: warehouse id
-  - `product_id`: product id
-- Response mẫu:
+Endpoints:
 
-```json
-{
-  "success": true,
-  "message": "Stock level detail",
-  "data": {
-    "warehouse_id": "wh_001",
-    "product_id": "prd_001",
-    "quantity": 50,
-    "reserved_quantity": 0
-  },
-  "trace_id": "trace-stock-level-detail-001"
-}
-```
-
-### GET `/stock-transactions`
-
-- Query params:
-  - `page`, `page_size`, `type`, `warehouse_id`, `product_id`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Stock transaction list",
-  "data": [
-    {
-      "id": "stx_001",
-      "transaction_no": "STX-0001",
-      "type": "PURCHASE_IN",
-      "warehouse_id": "wh_001",
-      "created_at": "2026-04-11T09:00:00Z"
-    }
-  ],
-  "trace_id": "trace-stock-transactions-001"
-}
-```
+- `GET /stock-transactions`
+- `POST /stock-transactions`
+- `GET /stock-transactions/{id}`
+- `POST /stock-transactions/{id}/actions/cancel`
 
 ### POST `/stock-transactions`
 
-- Payload:
+Request:
 
 ```json
 {
-  "type": "PURCHASE_IN",
   "warehouse_id": "wh_001",
-  "supplier_id": "sup_001",
-  "reference_no": "PN-0001",
+  "transaction_no": "STK000001",
+  "txn_type": "ADJUST_IN",
+  "reference_no": null,
+  "note": "Dieu chinh ton dau ky",
   "items": [
     {
       "product_id": "prd_001",
+      "line_no": 1,
       "quantity": 10,
-      "unit_cost": 100000
+      "unit_cost": 50000,
+      "from_warehouse_id": null,
+      "to_warehouse_id": null,
+      "note": null
     }
-  ],
-  "note": "Nhập hàng NCC A"
+  ]
 }
 ```
 
-- Response mẫu:
+### Purchase Orders
+
+Endpoints:
+
+- `GET /purchase-orders`
+- `POST /purchase-orders`
+- `GET /purchase-orders/{id}`
+- `PATCH /purchase-orders/{id}`
+- `POST /purchase-orders/{id}/actions/confirm`
+- `POST /purchase-orders/{id}/actions/complete`
+- `POST /purchase-orders/{id}/actions/cancel`
+- `POST /purchase-orders/{id}/payments`
+
+### POST `/purchase-orders`
+
+Request:
 
 ```json
 {
-  "success": true,
-  "message": "Stock transaction created",
-  "data": {
-    "id": "stx_001",
-    "transaction_no": "STX-0001",
-    "type": "PURCHASE_IN"
-  },
-  "trace_id": "trace-stock-transaction-create-001"
-}
-```
-
-### GET `/stock-transactions/{id}`
-
-- Path params:
-  - `id`: stock transaction id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Stock transaction detail",
-  "data": {
-    "id": "stx_001",
-    "transaction_no": "STX-0001",
-    "type": "PURCHASE_IN",
-    "items": [
-      {
-        "product_id": "prd_001",
-        "quantity": 10,
-        "unit_cost": 100000
-      }
-    ]
-  },
-  "trace_id": "trace-stock-transaction-detail-001"
-}
-```
-
-## 13. Cashbook
-
-### GET `/cashbooks`
-
-- Query params:
-  - `page`, `page_size`, `q`, `status`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Cashbook list",
-  "data": [
+  "store_id": "store_001",
+  "warehouse_id": "wh_001",
+  "supplier_id": "sup_001",
+  "purchase_order_no": "PO000001",
+  "discount_amount": 0,
+  "tax_amount": 0,
+  "note": "Nhap hang dot 1",
+  "items": [
     {
-      "id": "cb_001",
-      "code": "SOQUY01",
-      "name": "Sổ quỹ chính",
-      "currency": "VND",
-      "is_active": true
+      "product_id": "prd_001",
+      "line_no": 1,
+      "quantity": 50,
+      "unit_cost": 120000,
+      "line_total": 6000000,
+      "note": null
     }
-  ],
-  "trace_id": "trace-cashbooks-001"
+  ]
 }
 ```
+
+### POST `/purchase-orders/{id}/payments`
+
+Request:
+
+```json
+{
+  "payment_method": "BANK_TRANSFER",
+  "amount": 2000000,
+  "reference_no": "FT123456",
+  "note": "Tra truoc dot 1"
+}
+```
+
+### Purchase Returns
+
+Endpoints:
+
+- `GET /purchase-returns`
+- `POST /purchase-returns`
+- `GET /purchase-returns/{id}`
+
+### POST `/purchase-returns`
+
+Request:
+
+```json
+{
+  "purchase_order_id": "po_001",
+  "supplier_id": "sup_001",
+  "warehouse_id": "wh_001",
+  "purchase_return_no": "PR000001",
+  "refund_amount": 240000,
+  "note": "Tra hang loi nha cung cap",
+  "items": [
+    {
+      "purchase_order_item_id": "poi_001",
+      "product_id": "prd_001",
+      "line_no": 1,
+      "quantity": 2,
+      "return_price": 120000,
+      "line_total": 240000,
+      "note": null
+    }
+  ]
+}
+```
+
+### Stock Checks
+
+Endpoints:
+
+- `GET /stock-checks`
+- `POST /stock-checks`
+- `GET /stock-checks/{id}`
+- `PATCH /stock-checks/{id}`
+- `POST /stock-checks/{id}/actions/balance`
+
+### POST `/stock-checks`
+
+Request:
+
+```json
+{
+  "warehouse_id": "wh_001",
+  "stock_check_no": "SC000001",
+  "note": "Kiem ke cuoi thang",
+  "items": [
+    {
+      "product_id": "prd_001",
+      "line_no": 1,
+      "system_quantity": 45,
+      "actual_quantity": 44,
+      "note": "Thieu 1 san pham"
+    }
+  ]
+}
+```
+
+### Stock Write-Offs
+
+Endpoints:
+
+- `GET /stock-write-offs`
+- `POST /stock-write-offs`
+- `GET /stock-write-offs/{id}`
+
+### POST `/stock-write-offs`
+
+Request:
+
+```json
+{
+  "warehouse_id": "wh_001",
+  "stock_write_off_no": "SWO000001",
+  "reason": "Het han",
+  "note": "Xuat huy hang het han",
+  "items": [
+    {
+      "product_id": "prd_001",
+      "line_no": 1,
+      "quantity": 3,
+      "cost_price_at_time": 120000,
+      "note": null
+    }
+  ]
+}
+```
+
+## 8. Cashbook
+
+### Cashbooks
+
+Endpoints:
+
+- `GET /cashbooks`
+- `POST /cashbooks`
+- `GET /cashbooks/{id}`
+- `PATCH /cashbooks/{id}`
+- `GET /cashbooks/{id}/balance`
+- `GET /cashbooks/{id}/transactions`
+- `POST /cashbooks/{id}/actions/reconcile`
 
 ### POST `/cashbooks`
 
-- Payload:
+Request:
 
 ```json
 {
-  "code": "SOQUY01",
-  "name": "Sổ quỹ chính",
+  "store_id": "store_001",
+  "code": "CB001",
+  "name": "Quy tien mat cua hang",
   "currency": "VND",
-  "opening_balance": 5000000
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Cashbook created",
-  "data": {
-    "id": "cb_001",
-    "code": "SOQUY01",
-    "name": "Sổ quỹ chính"
-  },
-  "trace_id": "trace-cashbook-create-001"
-}
-```
-
-### GET `/cashbooks/{id}`
-
-- Path params:
-  - `id`: cashbook id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Cashbook detail",
-  "data": {
-    "id": "cb_001",
-    "code": "SOQUY01",
-    "name": "Sổ quỹ chính",
-    "opening_balance": 5000000
-  },
-  "trace_id": "trace-cashbook-detail-001"
-}
-```
-
-### PATCH `/cashbooks/{id}`
-
-- Path params:
-  - `id`: cashbook id
-- Payload:
-
-```json
-{
-  "name": "Sổ quỹ tiền mặt",
+  "opening_balance": 5000000,
   "is_active": true
 }
 ```
 
-- Response mẫu:
+### Cash Transactions
 
-```json
-{
-  "success": true,
-  "message": "Cashbook updated",
-  "data": {
-    "id": "cb_001",
-    "name": "Sổ quỹ tiền mặt"
-  },
-  "trace_id": "trace-cashbook-update-001"
-}
-```
+Endpoints:
 
-### GET `/cashbooks/{id}/balance`
-
-- Path params:
-  - `id`: cashbook id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Cashbook balance",
-  "data": {
-    "cashbook_id": "cb_001",
-    "opening_balance": 5000000,
-    "current_balance": 8300000
-  },
-  "trace_id": "trace-cashbook-balance-001"
-}
-```
-
-### GET `/cashbooks/{id}/transactions`
-
-- Path params:
-  - `id`: cashbook id
-- Query params:
-  - `page`, `page_size`, `type`, `sub_type`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Cashbook transactions",
-  "data": [
-    {
-      "id": "ctx_001",
-      "transaction_no": "CTX-0001",
-      "type": "RECEIPT",
-      "sub_type": "SALE_PAYMENT",
-      "amount": 250000
-    }
-  ],
-  "trace_id": "trace-cashbook-transactions-001"
-}
-```
-
-### POST `/cashbooks/{id}/actions/reconcile`
-
-- Path params:
-  - `id`: cashbook id
-- Payload:
-
-```json
-{
-  "counted_amount": 5200000,
-  "system_amount": 5000000,
-  "difference_reason": "Thiếu 200.000 do chưa ghi phiếu chi"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Cashbook reconciled",
-  "data": {
-    "cashbook_id": "cb_001",
-    "difference_amount": 200000
-  },
-  "trace_id": "trace-cashbook-reconcile-001"
-}
-```
-
-### GET `/cash-transactions`
-
-- Query params:
-  - `page`, `page_size`, `cashbook_id`, `type`, `sub_type`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Cash transaction list",
-  "data": [
-    {
-      "id": "ctx_001",
-      "transaction_no": "CTX-0001",
-      "type": "RECEIPT",
-      "sub_type": "SALE_PAYMENT",
-      "amount": 250000
-    }
-  ],
-  "trace_id": "trace-cash-transactions-001"
-}
-```
+- `GET /cash-transactions`
+- `POST /cash-transactions`
+- `GET /cash-transactions/{id}`
+- `PATCH /cash-transactions/{id}`
+- `POST /cash-transactions/{id}/actions/cancel`
 
 ### POST `/cash-transactions`
 
-- Payload:
+Request:
 
 ```json
 {
+  "store_id": "store_001",
   "cashbook_id": "cb_001",
-  "type": "PAYMENT",
-  "sub_type": "SALARY_PAYMENT",
-  "payment_method": "BANK_TRANSFER",
-  "amount": 8000000,
-  "counterparty_type": "EMPLOYEE",
-  "counterparty_id": "emp_001",
-  "source_document_type": "payroll",
-  "source_document_id": "payroll_001",
-  "note": "Chi lương tháng 04/2026"
+  "shift_id": "shift_001",
+  "transaction_no": "CTX000001",
+  "txn_type": "RECEIPT",
+  "sub_type": "SALE_PAYMENT",
+  "status": "DRAFT",
+  "payment_method": "CASH",
+  "amount": 350000,
+  "counterparty_type": "CUSTOMER",
+  "customer_id": "cus_001",
+  "supplier_id": null,
+  "employee_id": null,
+  "source_document_type": "bill",
+  "source_document_id": "bill_001",
+  "reference_no": null,
+  "note": "Thu tien bill POS"
 }
 ```
 
-- Response mẫu:
+Response `201`:
 
 ```json
 {
@@ -2692,405 +1441,163 @@ Content-Type: application/json
   "message": "Cash transaction created",
   "data": {
     "id": "ctx_001",
-    "transaction_no": "CTX-0001",
-    "type": "PAYMENT",
-    "sub_type": "SALARY_PAYMENT"
-  },
-  "trace_id": "trace-cash-transaction-create-001"
-}
-```
-
-### GET `/cash-transactions/{id}`
-
-- Path params:
-  - `id`: cash transaction id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Cash transaction detail",
-  "data": {
-    "id": "ctx_001",
+    "tenant_id": "ten_001",
+    "store_id": "store_001",
     "cashbook_id": "cb_001",
-    "type": "PAYMENT",
-    "sub_type": "SALARY_PAYMENT",
-    "amount": 8000000
+    "shift_id": "shift_001",
+    "transaction_no": "CTX000001",
+    "txn_type": "RECEIPT",
+    "sub_type": "SALE_PAYMENT",
+    "status": "DRAFT",
+    "payment_method": "CASH",
+    "amount": 350000,
+    "counterparty_type": "CUSTOMER",
+    "customer_id": "cus_001",
+    "source_document_type": "bill",
+    "source_document_id": "bill_001",
+    "note": "Thu tien bill POS"
   },
-  "trace_id": "trace-cash-transaction-detail-001"
+  "trace_id": "trace-cash-transactions-create-001"
 }
 ```
 
-### PATCH `/cash-transactions/{id}`
+### POST `/cashbooks/{id}/actions/reconcile`
 
-- Path params:
-  - `id`: cash transaction id
-- Payload:
+Request:
 
 ```json
 {
-  "note": "Cập nhật diễn giải phiếu chi"
+  "shift_id": "shift_001",
+  "system_amount": 5000000,
+  "counted_amount": 5200000,
+  "difference_amount": 200000,
+  "reason": "Thieu phieu chi chua nhap"
 }
 ```
 
-- Response mẫu:
+## 9. Suppliers
 
-```json
-{
-  "success": true,
-  "message": "Cash transaction updated",
-  "data": {
-    "id": "ctx_001",
-    "note": "Cập nhật diễn giải phiếu chi"
-  },
-  "trace_id": "trace-cash-transaction-update-001"
-}
-```
+Endpoints:
 
-### POST `/cash-transactions/{id}/actions/cancel`
-
-- Path params:
-  - `id`: cash transaction id
-- Payload:
-
-```json
-{
-  "reason": "Hủy phiếu chi nhập nhầm"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Cash transaction canceled",
-  "data": {
-    "id": "ctx_001",
-    "status": "CANCELED"
-  },
-  "trace_id": "trace-cash-transaction-cancel-001"
-}
-```
-
-## 14. Suppliers
-
-### GET `/suppliers`
-
-- Query params:
-  - `page`, `page_size`, `q`, `status`, `phone`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Supplier list",
-  "data": [
-    {
-      "id": "sup_001",
-      "code": "NCC0001",
-      "name": "Công ty A",
-      "phone": "0900000010",
-      "debt_balance": 1000000
-    }
-  ],
-  "trace_id": "trace-suppliers-001"
-}
-```
+- `GET /suppliers`
+- `POST /suppliers`
+- `GET /suppliers/{id}`
+- `PATCH /suppliers/{id}`
+- `GET /suppliers/{id}/debt-summary`
+- `GET /suppliers/{id}/debt-transactions`
+- `POST /suppliers/{id}/actions/activate`
+- `POST /suppliers/{id}/actions/deactivate`
+- `GET /supplier-debt-transactions`
+- `POST /supplier-debt-transactions`
+- `GET /supplier-debt-transactions/{id}`
 
 ### POST `/suppliers`
 
-- Payload:
+Request:
 
 ```json
 {
-  "code": "NCC0001",
-  "name": "Công ty A",
+  "store_id": "store_001",
+  "code": "SUP0001",
+  "name": "Nha cung cap A",
   "phone": "0900000010",
-  "email": "a@supplier.vn",
-  "address": "TP.HCM",
-  "contact_person": "Anh A"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Supplier created",
-  "data": {
-    "id": "sup_001",
-    "code": "NCC0001",
-    "name": "Công ty A"
-  },
-  "trace_id": "trace-supplier-create-001"
-}
-```
-
-### GET `/suppliers/{id}`
-
-- Path params:
-  - `id`: supplier id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Supplier detail",
-  "data": {
-    "id": "sup_001",
-    "code": "NCC0001",
-    "name": "Công ty A",
-    "debt_balance": 1000000
-  },
-  "trace_id": "trace-supplier-detail-001"
-}
-```
-
-### PATCH `/suppliers/{id}`
-
-- Path params:
-  - `id`: supplier id
-- Payload:
-
-```json
-{
-  "phone": "0900000011",
-  "payment_terms": "Thanh toán 15 ngày"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Supplier updated",
-  "data": {
-    "id": "sup_001",
-    "phone": "0900000011"
-  },
-  "trace_id": "trace-supplier-update-001"
-}
-```
-
-### GET `/suppliers/{id}/debt-summary`
-
-- Path params:
-  - `id`: supplier id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Supplier debt summary",
-  "data": {
-    "supplier_id": "sup_001",
-    "debt_balance": 1000000,
-    "total_increase": 5000000,
-    "total_payment": 4000000
-  },
-  "trace_id": "trace-supplier-debt-summary-001"
-}
-```
-
-### GET `/suppliers/{id}/debt-transactions`
-
-- Path params:
-  - `id`: supplier id
-- Query params:
-  - `page`, `page_size`, `type`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Supplier debt transactions",
-  "data": [
-    {
-      "id": "sdt_001",
-      "type": "PAYMENT",
-      "amount": 1000000
-    }
-  ],
-  "trace_id": "trace-supplier-debt-transactions-001"
-}
-```
-
-### POST `/suppliers/{id}/actions/activate`
-
-- Path params:
-  - `id`: supplier id
-- Payload:
-
-```json
-{
-  "reason": "Mở lại nhà cung cấp"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Supplier activated",
-  "data": {
-    "id": "sup_001",
-    "is_active": true
-  },
-  "trace_id": "trace-supplier-activate-001"
-}
-```
-
-### POST `/suppliers/{id}/actions/deactivate`
-
-- Path params:
-  - `id`: supplier id
-- Payload:
-
-```json
-{
-  "reason": "Ngưng hợp tác"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Supplier deactivated",
-  "data": {
-    "id": "sup_001",
-    "is_active": false
-  },
-  "trace_id": "trace-supplier-deactivate-001"
-}
-```
-
-### GET `/supplier-debt-transactions`
-
-- Query params:
-  - `page`, `page_size`, `supplier_id`, `type`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Supplier debt transaction list",
-  "data": [
-    {
-      "id": "sdt_001",
-      "supplier_id": "sup_001",
-      "type": "PAYMENT",
-      "amount": 1000000
-    }
-  ],
-  "trace_id": "trace-sdt-list-001"
+  "email": "ncc-a@example.com",
+  "address": "123 Nguyen Trai",
+  "address_line": "123 Nguyen Trai",
+  "ward": "Ward 2",
+  "district": "District 5",
+  "city": "HCM",
+  "contact_person": "Tran Van C",
+  "payment_terms": "Net 15",
+  "tax_code": "0312345678",
+  "is_active": true
 }
 ```
 
 ### POST `/supplier-debt-transactions`
 
-- Payload:
+Request:
 
 ```json
 {
   "supplier_id": "sup_001",
-  "type": "PAYMENT",
-  "amount": 1000000,
-  "source_document_type": "cash_transaction",
-  "source_document_id": "ctx_002",
-  "note": "Chi trả NCC"
+  "txn_type": "INCREASE",
+  "amount": 2000000,
+  "source_document_type": "purchase_order",
+  "source_document_id": "po_001",
+  "note": "Phat sinh cong no nhap hang"
 }
 ```
 
-- Response mẫu:
+## 10. Employees
+
+Ghi chu:
+
+- khong co `departments`
+- khong co `department_id`
+
+### Job Titles
+
+Endpoints:
+
+- `GET /job-titles`
+- `POST /job-titles`
+- `GET /job-titles/{id}`
+- `PATCH /job-titles/{id}`
+
+### POST `/job-titles`
+
+Request:
 
 ```json
 {
-  "success": true,
-  "message": "Supplier debt transaction created",
-  "data": {
-    "id": "sdt_001",
-    "supplier_id": "sup_001",
-    "type": "PAYMENT",
-    "amount": 1000000
-  },
-  "trace_id": "trace-sdt-create-001"
+  "code": "CASHIER",
+  "name": "Thu ngan",
+  "description": "Nhan vien thu ngan",
+  "is_active": true
 }
 ```
 
-### GET `/supplier-debt-transactions/{id}`
+### Employees
 
-- Path params:
-  - `id`: supplier debt transaction id
-- Response mẫu:
+Endpoints:
 
-```json
-{
-  "success": true,
-  "message": "Supplier debt transaction detail",
-  "data": {
-    "id": "sdt_001",
-    "supplier_id": "sup_001",
-    "type": "PAYMENT",
-    "amount": 1000000
-  },
-  "trace_id": "trace-sdt-detail-001"
-}
-```
-
-## 15. Employees
-
-### GET `/employees`
-
-- Query params:
-  - `page`, `page_size`, `q`, `status`, `job_title_id`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Employee list",
-  "data": [
-    {
-      "id": "emp_001",
-      "code": "EMP0001",
-      "full_name": "Nguyễn Văn A",
-      "job_title_name": "Thu ngân",
-      "employment_status": "ACTIVE"
-    }
-  ],
-  "trace_id": "trace-employees-001"
-}
-```
+- `GET /employees`
+- `POST /employees`
+- `GET /employees/{id}`
+- `PATCH /employees/{id}`
+- `POST /employees/{id}/actions/activate`
+- `POST /employees/{id}/actions/deactivate`
 
 ### POST `/employees`
 
-- Payload:
+Request:
 
 ```json
 {
-  "code": "EMP0001",
-  "full_name": "Nguyễn Văn A",
-  "phone": "0900000020",
-  "national_id": "012345678901",
-  "gender": "MALE",
-  "birthday": "1998-05-12",
-  "address": "Hà Nội",
+  "store_id": "store_001",
+  "user_id": "usr_003",
   "job_title_id": "jt_001",
+  "code": "EMP0001",
+  "full_name": "Tran Thi Thu",
+  "avatar_url": null,
+  "gender": "FEMALE",
+  "birthday": "1998-01-01",
+  "national_id": "079123456789",
+  "phone": "0900000011",
+  "email": "thu@example.com",
+  "address": "123 Tran Hung Dao",
+  "employment_status": "ACTIVE",
   "start_date": "2026-04-01",
-  "base_salary": 8000000,
+  "end_date": null,
+  "base_salary": 7000000,
   "allowance_amount": 500000,
-  "user_id": null,
-  "note": "Nhân viên thu ngân"
+  "advance_balance": 0,
+  "note": "Thu ngan ca sang"
 }
 ```
 
-- Response mẫu:
+Response `201`:
 
 ```json
 {
@@ -3098,1350 +1605,522 @@ Content-Type: application/json
   "message": "Employee created",
   "data": {
     "id": "emp_001",
-    "code": "EMP0001",
-    "full_name": "Nguyễn Văn A"
-  },
-  "trace_id": "trace-employee-create-001"
-}
-```
-
-### GET `/employees/{id}`
-
-- Path params:
-  - `id`: employee id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Employee detail",
-  "data": {
-    "id": "emp_001",
-    "code": "EMP0001",
-    "full_name": "Nguyễn Văn A",
+    "tenant_id": "ten_001",
+    "store_id": "store_001",
+    "user_id": "usr_003",
     "job_title_id": "jt_001",
-    "base_salary": 8000000,
+    "code": "EMP0001",
+    "full_name": "Tran Thi Thu",
+    "employment_status": "ACTIVE",
+    "base_salary": 7000000,
     "allowance_amount": 500000,
-    "employment_status": "ACTIVE"
+    "advance_balance": 0
   },
-  "trace_id": "trace-employee-detail-001"
+  "trace_id": "trace-employees-create-001"
 }
 ```
 
-### PATCH `/employees/{id}`
+### Work Shifts
 
-- Path params:
-  - `id`: employee id
-- Payload:
+Endpoints:
 
-```json
-{
-  "job_title_id": "jt_002",
-  "base_salary": 8500000,
-  "allowance_amount": 700000,
-  "note": "Điều chỉnh theo hợp đồng mới"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Employee updated",
-  "data": {
-    "id": "emp_001",
-    "base_salary": 8500000,
-    "allowance_amount": 700000
-  },
-  "trace_id": "trace-employee-update-001"
-}
-```
-
-### POST `/employees/{id}/actions/activate`
-
-- Path params:
-  - `id`: employee id
-- Payload:
-
-```json
-{
-  "reason": "Đi làm lại"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Employee activated",
-  "data": {
-    "id": "emp_001",
-    "employment_status": "ACTIVE"
-  },
-  "trace_id": "trace-employee-activate-001"
-}
-```
-
-### POST `/employees/{id}/actions/deactivate`
-
-- Path params:
-  - `id`: employee id
-- Payload:
-
-```json
-{
-  "reason": "Tạm nghỉ"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Employee deactivated",
-  "data": {
-    "id": "emp_001",
-    "employment_status": "INACTIVE"
-  },
-  "trace_id": "trace-employee-deactivate-001"
-}
-```
-
-### POST `/employees/{id}/actions/link-user`
-
-- Path params:
-  - `id`: employee id
-- Payload:
-
-```json
-{
-  "user_id": "usr_002"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Employee linked to user",
-  "data": {
-    "employee_id": "emp_001",
-    "user_id": "usr_002"
-  },
-  "trace_id": "trace-employee-link-user-001"
-}
-```
-
-### POST `/employees/{id}/actions/unlink-user`
-
-- Path params:
-  - `id`: employee id
-- Payload:
-
-```json
-{
-  "reason": "Ngưng dùng tài khoản này"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Employee unlinked from user",
-  "data": {
-    "employee_id": "emp_001",
-    "user_id": null
-  },
-  "trace_id": "trace-employee-unlink-user-001"
-}
-```
-
-### GET `/employees/{id}/attendance-summary`
-
-- Path params:
-  - `id`: employee id
-- Query params:
-  - `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Employee attendance summary",
-  "data": {
-    "employee_id": "emp_001",
-    "worked_days": 25,
-    "late_days": 1,
-    "overtime_minutes": 180
-  },
-  "trace_id": "trace-employee-attendance-summary-001"
-}
-```
-
-### GET `/employees/{id}/payrolls`
-
-- Path params:
-  - `id`: employee id
-- Query params:
-  - `page`, `page_size`, `from`, `to`, `status`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Employee payrolls",
-  "data": [
-    {
-      "id": "payroll_001",
-      "period_name": "Tháng 04/2026",
-      "net_amount": 7500000,
-      "status": "PAID"
-    }
-  ],
-  "trace_id": "trace-employee-payrolls-001"
-}
-```
-
-### GET `/job-titles`
-
-- Query params:
-  - `page`, `page_size`, `q`, `status`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Job title list",
-  "data": [
-    {
-      "id": "jt_001",
-      "code": "CASHIER",
-      "name": "Thu ngân"
-    }
-  ],
-  "trace_id": "trace-job-titles-001"
-}
-```
-
-### POST `/job-titles`
-
-- Payload:
-
-```json
-{
-  "code": "CASHIER",
-  "name": "Thu ngân",
-  "description": "Nhân viên bán hàng tại quầy"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Job title created",
-  "data": {
-    "id": "jt_001",
-    "code": "CASHIER",
-    "name": "Thu ngân"
-  },
-  "trace_id": "trace-job-title-create-001"
-}
-```
-
-### GET `/job-titles/{id}`
-
-- Path params:
-  - `id`: job title id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Job title detail",
-  "data": {
-    "id": "jt_001",
-    "code": "CASHIER",
-    "name": "Thu ngân"
-  },
-  "trace_id": "trace-job-title-detail-001"
-}
-```
-
-### PATCH `/job-titles/{id}`
-
-- Path params:
-  - `id`: job title id
-- Payload:
-
-```json
-{
-  "name": "Thu ngân ca sáng"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Job title updated",
-  "data": {
-    "id": "jt_001",
-    "name": "Thu ngân ca sáng"
-  },
-  "trace_id": "trace-job-title-update-001"
-}
-```
-
-### GET `/work-shifts`
-
-- Query params:
-  - `page`, `page_size`, `q`, `status`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Work shift list",
-  "data": [
-    {
-      "id": "ws_001",
-      "code": "CA-SANG",
-      "name": "Ca sáng",
-      "start_time": "08:00:00",
-      "end_time": "17:00:00"
-    }
-  ],
-  "trace_id": "trace-work-shifts-001"
-}
-```
+- `GET /work-shifts`
+- `POST /work-shifts`
+- `GET /work-shifts/{id}`
+- `PATCH /work-shifts/{id}`
 
 ### POST `/work-shifts`
 
-- Payload:
+Request:
 
 ```json
 {
-  "code": "CA-SANG",
-  "name": "Ca sáng",
+  "code": "MORNING",
+  "name": "Ca sang",
   "start_time": "08:00:00",
   "end_time": "17:00:00",
-  "break_minutes": 60
+  "break_minutes": 60,
+  "is_overnight": false,
+  "is_active": true
 }
 ```
 
-- Response mẫu:
+### Work Schedules
 
-```json
-{
-  "success": true,
-  "message": "Work shift created",
-  "data": {
-    "id": "ws_001",
-    "code": "CA-SANG",
-    "name": "Ca sáng"
-  },
-  "trace_id": "trace-work-shift-create-001"
-}
-```
+Endpoints:
 
-### GET `/work-shifts/{id}`
-
-- Path params:
-  - `id`: work shift id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Work shift detail",
-  "data": {
-    "id": "ws_001",
-    "code": "CA-SANG",
-    "name": "Ca sáng"
-  },
-  "trace_id": "trace-work-shift-detail-001"
-}
-```
-
-### PATCH `/work-shifts/{id}`
-
-- Path params:
-  - `id`: work shift id
-- Payload:
-
-```json
-{
-  "end_time": "17:30:00",
-  "break_minutes": 45
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Work shift updated",
-  "data": {
-    "id": "ws_001",
-    "end_time": "17:30:00"
-  },
-  "trace_id": "trace-work-shift-update-001"
-}
-```
-
-### GET `/work-schedules`
-
-- Query params:
-  - `page`, `page_size`, `employee_id`, `work_shift_id`, `from`, `to`, `status`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Work schedule list",
-  "data": [
-    {
-      "id": "sched_001",
-      "employee_id": "emp_001",
-      "work_shift_id": "ws_001",
-      "schedule_date": "2026-04-11",
-      "status": "SCHEDULED"
-    }
-  ],
-  "trace_id": "trace-work-schedules-001"
-}
-```
+- `GET /work-schedules`
+- `POST /work-schedules`
+- `GET /work-schedules/{id}`
+- `PATCH /work-schedules/{id}`
 
 ### POST `/work-schedules`
 
-- Payload:
+Request:
 
 ```json
 {
   "employee_id": "emp_001",
-  "work_shift_id": "ws_001",
-  "schedule_date": "2026-04-11",
-  "note": "Xếp lịch ca sáng"
+  "work_shift_id": "wshift_001",
+  "schedule_date": "2026-04-13",
+  "status": "SCHEDULED",
+  "note": "Ca thuong"
 }
 ```
 
-- Response mẫu:
+### Attendance Records
 
-```json
-{
-  "success": true,
-  "message": "Work schedule created",
-  "data": {
-    "id": "sched_001",
-    "status": "SCHEDULED"
-  },
-  "trace_id": "trace-work-schedule-create-001"
-}
-```
+Endpoints:
 
-### GET `/work-schedules/{id}`
-
-- Path params:
-  - `id`: work schedule id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Work schedule detail",
-  "data": {
-    "id": "sched_001",
-    "employee_id": "emp_001",
-    "work_shift_id": "ws_001",
-    "schedule_date": "2026-04-11",
-    "status": "SCHEDULED"
-  },
-  "trace_id": "trace-work-schedule-detail-001"
-}
-```
-
-### PATCH `/work-schedules/{id}`
-
-- Path params:
-  - `id`: work schedule id
-- Payload:
-
-```json
-{
-  "work_shift_id": "ws_002",
-  "note": "Đổi sang ca chiều"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Work schedule updated",
-  "data": {
-    "id": "sched_001",
-    "work_shift_id": "ws_002"
-  },
-  "trace_id": "trace-work-schedule-update-001"
-}
-```
-
-### POST `/work-schedules/{id}/actions/cancel`
-
-- Path params:
-  - `id`: work schedule id
-- Payload:
-
-```json
-{
-  "reason": "Nghỉ đột xuất"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Work schedule canceled",
-  "data": {
-    "id": "sched_001",
-    "status": "CANCELED"
-  },
-  "trace_id": "trace-work-schedule-cancel-001"
-}
-```
-
-### GET `/attendance-records`
-
-- Query params:
-  - `page`, `page_size`, `employee_id`, `status`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Attendance record list",
-  "data": [
-    {
-      "id": "att_001",
-      "employee_id": "emp_001",
-      "attendance_date": "2026-04-11",
-      "status": "PRESENT",
-      "worked_minutes": 480
-    }
-  ],
-  "trace_id": "trace-attendance-records-001"
-}
-```
+- `GET /attendance-records`
+- `POST /attendance-records`
+- `GET /attendance-records/{id}`
+- `PATCH /attendance-records/{id}`
 
 ### POST `/attendance-records`
 
-- Payload:
+Request:
 
 ```json
 {
   "employee_id": "emp_001",
-  "attendance_date": "2026-04-11",
-  "work_shift_id": "ws_001",
-  "check_in_at": "2026-04-11T08:00:00Z",
-  "check_out_at": "2026-04-11T17:30:00Z",
+  "work_shift_id": "wshift_001",
+  "work_schedule_id": "ws_001",
+  "pos_shift_id": "shift_001",
+  "attendance_date": "2026-04-12",
   "source_type": "POS_SHIFT",
-  "note": "Chấm công từ ca POS"
+  "status": "PRESENT",
+  "check_in_at": "2026-04-12T08:00:00Z",
+  "check_out_at": "2026-04-12T17:30:00Z",
+  "worked_minutes": 510,
+  "late_minutes": 0,
+  "overtime_minutes": 30,
+  "note": "Du cong"
 }
 ```
 
-- Response mẫu:
+### Payroll Periods
 
-```json
-{
-  "success": true,
-  "message": "Attendance record created",
-  "data": {
-    "id": "att_001",
-    "employee_id": "emp_001",
-    "worked_minutes": 510
-  },
-  "trace_id": "trace-attendance-create-001"
-}
-```
+Endpoints:
 
-### GET `/attendance-records/{id}`
-
-- Path params:
-  - `id`: attendance id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Attendance record detail",
-  "data": {
-    "id": "att_001",
-    "employee_id": "emp_001",
-    "attendance_date": "2026-04-11",
-    "worked_minutes": 510,
-    "late_minutes": 0
-  },
-  "trace_id": "trace-attendance-detail-001"
-}
-```
-
-### PATCH `/attendance-records/{id}`
-
-- Path params:
-  - `id`: attendance id
-- Payload:
-
-```json
-{
-  "check_out_at": "2026-04-11T17:00:00Z",
-  "note": "Điều chỉnh giờ ra"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Attendance record updated",
-  "data": {
-    "id": "att_001",
-    "worked_minutes": 480
-  },
-  "trace_id": "trace-attendance-update-001"
-}
-```
-
-### POST `/attendance-records/{id}/actions/confirm`
-
-- Path params:
-  - `id`: attendance id
-- Payload:
-
-```json
-{
-  "note": "Xác nhận bảng công"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Attendance record confirmed",
-  "data": {
-    "id": "att_001",
-    "confirmed": true
-  },
-  "trace_id": "trace-attendance-confirm-001"
-}
-```
-
-### POST `/attendance-records/{id}/actions/cancel`
-
-- Path params:
-  - `id`: attendance id
-- Payload:
-
-```json
-{
-  "reason": "Ghi nhận sai"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Attendance record canceled",
-  "data": {
-    "id": "att_001",
-    "status": "OFF"
-  },
-  "trace_id": "trace-attendance-cancel-001"
-}
-```
-
-### GET `/payroll-periods`
-
-- Query params:
-  - `page`, `page_size`, `status`, `from`, `to`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payroll period list",
-  "data": [
-    {
-      "id": "pp_202604",
-      "code": "2026-04",
-      "name": "Tháng 04/2026",
-      "status": "OPEN"
-    }
-  ],
-  "trace_id": "trace-payroll-periods-001"
-}
-```
+- `GET /payroll-periods`
+- `POST /payroll-periods`
+- `GET /payroll-periods/{id}`
+- `PATCH /payroll-periods/{id}`
 
 ### POST `/payroll-periods`
 
-- Payload:
+Request:
 
 ```json
 {
   "code": "2026-04",
-  "name": "Tháng 04/2026",
+  "name": "Luong thang 04/2026",
   "from_date": "2026-04-01",
-  "to_date": "2026-04-30"
+  "to_date": "2026-04-30",
+  "status": "OPEN"
 }
 ```
 
-- Response mẫu:
+### Payrolls
 
-```json
-{
-  "success": true,
-  "message": "Payroll period created",
-  "data": {
-    "id": "pp_202604",
-    "status": "OPEN"
-  },
-  "trace_id": "trace-payroll-period-create-001"
-}
-```
+Endpoints:
 
-### GET `/payroll-periods/{id}`
-
-- Path params:
-  - `id`: payroll period id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payroll period detail",
-  "data": {
-    "id": "pp_202604",
-    "code": "2026-04",
-    "name": "Tháng 04/2026",
-    "from_date": "2026-04-01",
-    "to_date": "2026-04-30",
-    "status": "OPEN"
-  },
-  "trace_id": "trace-payroll-period-detail-001"
-}
-```
-
-### PATCH `/payroll-periods/{id}`
-
-- Path params:
-  - `id`: payroll period id
-- Payload:
-
-```json
-{
-  "name": "Bảng lương tháng 04/2026"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payroll period updated",
-  "data": {
-    "id": "pp_202604",
-    "name": "Bảng lương tháng 04/2026"
-  },
-  "trace_id": "trace-payroll-period-update-001"
-}
-```
-
-### POST `/payroll-periods/{id}/actions/close`
-
-- Path params:
-  - `id`: payroll period id
-- Payload:
-
-```json
-{
-  "note": "Khóa kỳ lương tháng 04"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payroll period closed",
-  "data": {
-    "id": "pp_202604",
-    "status": "CLOSED"
-  },
-  "trace_id": "trace-payroll-period-close-001"
-}
-```
-
-### GET `/payrolls`
-
-- Query params:
-  - `page`, `page_size`, `employee_id`, `payroll_period_id`, `status`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payroll list",
-  "data": [
-    {
-      "id": "payroll_001",
-      "employee_id": "emp_001",
-      "payroll_period_id": "pp_202604",
-      "net_amount": 7500000,
-      "status": "CONFIRMED"
-    }
-  ],
-  "trace_id": "trace-payrolls-001"
-}
-```
+- `GET /payrolls`
+- `POST /payrolls`
+- `GET /payrolls/{id}`
+- `PATCH /payrolls/{id}`
+- `POST /payrolls/{id}/actions/confirm`
+- `POST /payrolls/{id}/actions/pay`
 
 ### POST `/payrolls`
 
-- Payload:
+Request:
 
 ```json
 {
+  "payroll_period_id": "pp_001",
   "employee_id": "emp_001",
-  "payroll_period_id": "pp_202604",
-  "base_salary": 8000000,
-  "working_days_standard": 26,
-  "working_days_actual": 25,
+  "status": "DRAFT",
+  "base_salary": 7000000,
   "allowance_amount": 500000,
   "deduction_amount": 200000,
-  "advance_offset_amount": 1000000,
-  "note": "Lương tháng 04/2026"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payroll created",
-  "data": {
-    "id": "payroll_001",
-    "gross_amount": 8192307.69,
-    "net_amount": 6992307.69,
-    "status": "DRAFT"
-  },
-  "trace_id": "trace-payroll-create-001"
-}
-```
-
-### GET `/payrolls/{id}`
-
-- Path params:
-  - `id`: payroll id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payroll detail",
-  "data": {
-    "id": "payroll_001",
-    "employee_id": "emp_001",
-    "gross_amount": 8192307.69,
-    "net_amount": 6992307.69,
-    "status": "DRAFT"
-  },
-  "trace_id": "trace-payroll-detail-001"
-}
-```
-
-### PATCH `/payrolls/{id}`
-
-- Path params:
-  - `id`: payroll id
-- Payload:
-
-```json
-{
-  "deduction_amount": 100000,
-  "note": "Điều chỉnh khấu trừ"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payroll updated",
-  "data": {
-    "id": "payroll_001",
-    "net_amount": 7092307.69
-  },
-  "trace_id": "trace-payroll-update-001"
-}
-```
-
-### POST `/payrolls/{id}/actions/confirm`
-
-- Path params:
-  - `id`: payroll id
-- Payload:
-
-```json
-{
-  "note": "Xác nhận bảng lương"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payroll confirmed",
-  "data": {
-    "id": "payroll_001",
-    "status": "CONFIRMED"
-  },
-  "trace_id": "trace-payroll-confirm-001"
+  "bonus_amount": 300000,
+  "advance_offset_amount": 0,
+  "net_amount": 7600000,
+  "note": "Luong thang 04"
 }
 ```
 
 ### POST `/payrolls/{id}/actions/pay`
 
-- Path params:
-  - `id`: payroll id
-- Payload:
+Request:
 
 ```json
 {
   "cashbook_id": "cb_001",
-  "payment_method": "BANK_TRANSFER",
-  "note": "Chi lương qua ngân hàng"
+  "note": "Chi luong nhan vien"
 }
 ```
 
-- Response mẫu:
+## 11. Reports And Dashboard
 
-```json
-{
-  "success": true,
-  "message": "Payroll paid",
-  "data": {
-    "id": "payroll_001",
-    "status": "PAID",
-    "cash_transaction_id": "ctx_001"
-  },
-  "trace_id": "trace-payroll-pay-001"
-}
-```
+### Dashboard
 
-### POST `/payrolls/{id}/actions/cancel`
+Endpoints:
 
-- Path params:
-  - `id`: payroll id
-- Payload:
-
-```json
-{
-  "reason": "Tạo nhầm bảng lương"
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Payroll canceled",
-  "data": {
-    "id": "payroll_001",
-    "status": "CANCELED"
-  },
-  "trace_id": "trace-payroll-cancel-001"
-}
-```
-
-## 16. Reports
+- `GET /reports/dashboard`
 
 ### GET `/reports/dashboard`
 
-- Query params:
-  - `from`, `to`
-- Response mẫu:
+Params:
+
+- query:
+  - `from_date`
+  - `to_date`
+  - `store_id`
+
+Response `200`:
 
 ```json
 {
   "success": true,
-  "message": "Dashboard report",
+  "message": "Dashboard",
   "data": {
-    "gross_sales": 12500000,
-    "bill_count": 42,
-    "net_profit_estimate": 3200000
+    "sales_summary": {
+      "bill_count": 120,
+      "gross_sales_amount": 45000000,
+      "return_amount": 1200000,
+      "net_sales_amount": 43800000
+    },
+    "inventory_summary": {
+      "low_stock_count": 12,
+      "out_of_stock_count": 4
+    },
+    "cashbook_summary": {
+      "receipt_amount": 30000000,
+      "payment_amount": 5000000,
+      "closing_balance": 25000000
+    }
   },
-  "trace_id": "trace-report-dashboard-001"
+  "trace_id": "trace-dashboard-001"
 }
 ```
 
-### GET `/reports/sales`
+### Report resources
 
-- Query params:
-  - `from`, `to`, `group_by`, `cashier_id`, `product_id`
-- Response mẫu:
+Endpoints:
+
+- `GET /reports/sales`
+- `GET /reports/inventory`
+- `GET /reports/cashflow`
+- `GET /reports/customer-debt`
+- `GET /reports/supplier-debt`
+- `GET /reports/employees`
+- `GET /reports/customers`
+
+## 12. Audit, Settings, Devices
+
+### Audit Logs
+
+Endpoints:
+
+- `GET /audit-logs`
+- `GET /audit-logs/{id}`
+
+Response `200`:
 
 ```json
 {
   "success": true,
-  "message": "Sales report",
-  "data": [
-    {
-      "period": "2026-04-11",
-      "gross_sales": 12500000,
-      "bill_count": 42
-    }
-  ],
-  "trace_id": "trace-report-sales-001"
-}
-```
-
-### GET `/reports/inventory`
-
-- Query params:
-  - `from`, `to`, `warehouse_id`, `product_id`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Inventory report",
-  "data": [
-    {
-      "product_id": "prd_001",
-      "opening_qty": 40,
-      "in_qty": 10,
-      "out_qty": 5,
-      "closing_qty": 45
-    }
-  ],
-  "trace_id": "trace-report-inventory-001"
-}
-```
-
-### GET `/reports/cashflow`
-
-- Query params:
-  - `from`, `to`, `cashbook_id`, `group_by`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Cashflow report",
-  "data": [
-    {
-      "period": "2026-04-11",
-      "cash_in": 7000000,
-      "cash_out": 300000,
-      "net_cashflow": 6700000
-    }
-  ],
-  "trace_id": "trace-report-cashflow-001"
-}
-```
-
-### GET `/reports/customer-debt`
-
-- Query params:
-  - `from`, `to`, `customer_id`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Customer debt report",
-  "data": [
-    {
-      "customer_id": "cus_001",
-      "customer_name": "Nguyễn Thị B",
-      "debt_balance": 300000
-    }
-  ],
-  "trace_id": "trace-report-customer-debt-001"
-}
-```
-
-### GET `/reports/supplier-debt`
-
-- Query params:
-  - `from`, `to`, `supplier_id`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Supplier debt report",
-  "data": [
-    {
-      "supplier_id": "sup_001",
-      "supplier_name": "Công ty A",
-      "debt_balance": 1000000
-    }
-  ],
-  "trace_id": "trace-report-supplier-debt-001"
-}
-```
-
-### GET `/reports/employees`
-
-- Query params:
-  - `from`, `to`, `employee_id`, `job_title_id`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Employee report",
-  "data": [
-    {
-      "employee_id": "emp_001",
-      "worked_days": 25,
-      "overtime_minutes": 180,
-      "net_salary": 7500000
-    }
-  ],
-  "trace_id": "trace-report-employees-001"
-}
-```
-
-## 17. Audit
-
-### GET `/audit-logs`
-
-- Query params:
-  - `page`, `page_size`, `entity_type`, `action`, `from`, `to`, `actor_user_id`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Audit log list",
+  "message": "Audit logs",
   "data": [
     {
       "id": "audit_001",
-      "action": "sales-channel.bills.complete",
-      "entity_type": "bill",
+      "tenant_id": "ten_001",
+      "actor_user_id": "usr_001",
+      "actor_role_code": "CASHIER",
+      "action": "BILL_COMPLETED",
+      "entity_type": "pos_bills",
       "entity_id": "bill_001",
-      "actor_user_id": "usr_002",
-      "created_at": "2026-04-11T08:30:00Z"
+      "reason": null,
+      "before_data": null,
+      "after_data": {
+        "status": "COMPLETED"
+      },
+      "metadata": {
+        "source": "api"
+      },
+      "trace_id": "trace-bills-complete-001",
+      "ip_address": "127.0.0.1",
+      "created_at": "2026-04-12T08:46:05Z"
     }
   ],
-  "trace_id": "trace-audit-logs-001"
+  "trace_id": "trace-audit-list-001"
 }
 ```
 
-### GET `/audit-logs/{id}`
+### Settings
 
-- Path params:
-  - `id`: audit log id
-- Response mẫu:
+Endpoints:
 
-```json
-{
-  "success": true,
-  "message": "Audit log detail",
-  "data": {
-    "id": "audit_001",
-    "action": "sales-channel.bills.complete",
-    "entity_type": "bill",
-    "entity_id": "bill_001",
-    "before_data": {},
-    "after_data": {
-      "status": "COMPLETED"
-    }
-  },
-  "trace_id": "trace-audit-log-detail-001"
-}
-```
-
-## 18. Devices / Settings
-
-### GET `/devices`
-
-- Query params:
-  - `page`, `page_size`, `q`, `device_type`, `status`
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Device list",
-  "data": [
-    {
-      "id": "device_pos_001",
-      "code": "POS-01",
-      "name": "Máy bán hàng 01",
-      "device_type": "POS"
-    }
-  ],
-  "trace_id": "trace-devices-001"
-}
-```
-
-### POST `/devices`
-
-- Payload:
-
-```json
-{
-  "code": "POS-01",
-  "name": "Máy bán hàng 01",
-  "device_type": "POS",
-  "ip_address": "192.168.1.10",
-  "metadata": {
-    "printer_name": "XPrinter"
-  }
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Device created",
-  "data": {
-    "id": "device_pos_001",
-    "code": "POS-01",
-    "name": "Máy bán hàng 01"
-  },
-  "trace_id": "trace-device-create-001"
-}
-```
-
-### GET `/devices/{id}`
-
-- Path params:
-  - `id`: device id
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Device detail",
-  "data": {
-    "id": "device_pos_001",
-    "code": "POS-01",
-    "name": "Máy bán hàng 01",
-    "device_type": "POS",
-    "ip_address": "192.168.1.10"
-  },
-  "trace_id": "trace-device-detail-001"
-}
-```
-
-### PATCH `/devices/{id}`
-
-- Path params:
-  - `id`: device id
-- Payload:
-
-```json
-{
-  "name": "Máy POS quầy 1",
-  "metadata": {
-    "printer_name": "XPrinter XP-58"
-  }
-}
-```
-
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Device updated",
-  "data": {
-    "id": "device_pos_001",
-    "name": "Máy POS quầy 1"
-  },
-  "trace_id": "trace-device-update-001"
-}
-```
-
-### GET `/settings`
-
-- Query params: không có
-- Response mẫu:
-
-```json
-{
-  "success": true,
-  "message": "Settings detail",
-  "data": {
-    "store_name": "MeuOmni Store",
-    "default_currency": "VND",
-    "allow_negative_stock": false
-  },
-  "trace_id": "trace-settings-detail-001"
-}
-```
+- `GET /settings`
+- `PATCH /settings`
 
 ### PATCH `/settings`
 
-- Payload:
+Request:
 
 ```json
 {
-  "store_name": "MeuOmni Flagship Store",
-  "default_currency": "VND",
-  "allow_negative_stock": false
+  "cost_method": "WEIGHTED_AVERAGE",
+  "allow_negative_stock": false,
+  "auto_barcode": true,
+  "default_unit_id": "unit_001",
+  "store_name": "MasterCare Store",
+  "store_phone": "0900000001",
+  "store_logo_file_id": "file_001",
+  "receipt_header": "Cam on quy khach",
+  "receipt_footer": "Hen gap lai",
+  "session_timeout": 120,
+  "max_login_attempts": 5,
+  "lock_duration": 15,
+  "password_min_length": 8
 }
 ```
 
-- Response mẫu:
+### Devices
+
+Endpoints:
+
+- `GET /devices`
+- `POST /devices`
+- `GET /devices/{id}`
+- `PATCH /devices/{id}`
+
+### POST `/devices`
+
+Request:
+
+```json
+{
+  "store_id": "store_001",
+  "code": "DEV001",
+  "name": "POS Counter 1",
+  "device_type": "POS",
+  "ip_address": "192.168.1.10",
+  "metadata": {
+    "printer_model": "EPSON TM-T82"
+  },
+  "is_active": true
+}
+```
+
+## 13. Import, Export, Files, Bulk
+
+### Import/Export
+
+Endpoints:
+
+- `GET /products/import/template`
+- `POST /products/import`
+- `POST /products/import/confirm`
+- `GET /products/export`
+- `POST /customers/import`
+- `GET /customers/export`
+- `GET /bills/export`
+- `GET /cash-transactions/export`
+- `GET /reports/{type}/export`
+
+Response `202`:
 
 ```json
 {
   "success": true,
-  "message": "Settings updated",
+  "message": "Export queued",
   "data": {
-    "store_name": "MeuOmni Flagship Store",
-    "default_currency": "VND"
+    "job_id": "job_export_001",
+    "status": "QUEUED"
   },
-  "trace_id": "trace-settings-update-001"
+  "trace_id": "trace-export-001"
 }
 ```
 
-## 19. Ghi chú triển khai
+### Files
 
-- Toàn bộ API protected phải có `Authorization` và `X-Tenant-Id`.
-- Role và permission lấy từ token, không truyền qua header riêng.
-- Nhân viên không có phòng ban, nên không tồn tại:
-  - `department_id`
-  - `/departments`
-  - filter theo phòng ban
-- Các payload mẫu là chuẩn đề xuất cho phase 1; khi code nếu có field phụ, phải giữ tương thích với resource-first design hiện tại.
+Endpoints:
+
+- `POST /files/upload`
+- `GET /files/{id}`
+- `DELETE /files/{id}`
+
+### POST `/files/upload`
+
+Response `201`:
+
+```json
+{
+  "success": true,
+  "message": "File uploaded",
+  "data": {
+    "id": "file_001",
+    "tenant_id": "ten_001",
+    "original_name": "logo.png",
+    "stored_name": "file_001.png",
+    "content_type": "image/png",
+    "extension": ".png",
+    "size_bytes": 182003,
+    "storage_provider": "LOCAL",
+    "storage_key": "uploads/2026/04/file_001.png",
+    "checksum_sha256": "sha256-value",
+    "uploaded_by": "usr_001",
+    "deleted_at": null
+  },
+  "trace_id": "trace-files-upload-001"
+}
+```
+
+### Bulk
+
+Endpoints:
+
+- `POST /products/bulk`
+- `POST /products/bulk-update`
+- `POST /stock-transactions/bulk`
+- `POST /attendance-records/bulk`
+
+## 14. Platform APIs
+
+### Health
+
+- `GET /health`
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "message": "Healthy",
+  "data": {
+    "status": "UP",
+    "server_time": "2026-04-12T13:00:00Z"
+  },
+  "trace_id": "trace-health-001"
+}
+```
+
+### Status
+
+- `GET /status`
+
+### Webhooks
+
+Endpoints:
+
+- `GET /webhooks`
+- `POST /webhooks`
+- `PATCH /webhooks/{id}`
+- `DELETE /webhooks/{id}`
+
+### POST `/webhooks`
+
+Request:
+
+```json
+{
+  "name": "ERP sync",
+  "endpoint_url": "https://example.com/webhooks/mastercare",
+  "event_codes": ["bill.completed", "purchase-order.completed"],
+  "secret_key": "webhook-secret",
+  "status": "ACTIVE"
+}
+```
+
+### Notifications
+
+Endpoints:
+
+- `GET /notifications`
+- `POST /notifications/{id}/actions/mark-read`
+- `POST /notifications/actions/mark-all-read`
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "message": "Notifications",
+  "data": [
+    {
+      "id": "noti_001",
+      "tenant_id": "ten_001",
+      "user_id": "usr_001",
+      "notification_type": "SYSTEM",
+      "title": "Canh bao ton kho thap",
+      "message": "San pham SP000001 dang duoi muc ton toi thieu",
+      "data": {
+        "product_id": "prd_001"
+      },
+      "status": "UNREAD",
+      "read_at": null
+    }
+  ],
+  "trace_id": "trace-notifications-list-001"
+}
+```
+
+## 15. Security, Session, and Non-functional Rules
+
+- JWT can co `sub`, `tenant_id`, `roles`, `permissions`.
+- Protected endpoint phai xem `tenant_id` trong token la tenant context mac dinh cua request.
+- Neu co `X-Tenant-Id` va khac `tenant_id` trong token, he thong phai co guard cross-tenant truoc khi chap nhan.
+  - Session/security map voi cac bang:
+    - `refresh_tokens`
+  - `password_resets`
+  - `idempotency_keys`
+  - `auth_login_attempts`
+- `users.email` va `users.phone` bat buoc globally unique theo `BR-AUTH-08`.
+- Login bang `username | email | phone` phai resolve `tenant_id` tu user record, khong yeu cau user chon tenant.
+- Field nhay cam can guard:
+  - `cost_price`
+  - `debt_balance`
+  - `base_salary`
+  - `national_id`
+- Request size limit:
+  - `1MB` cho JSON thuong
+  - `10MB` cho upload
+- Co the ho tro cursor pagination:
+
+```http
+GET /api/v1/cash-transactions?after=cursor_abc&limit=20
+GET /api/v1/audit-logs?after=cursor_xyz&limit=50
+```
+
+## 16. Permission Namespace
+
+Dung duy nhat pattern:
+
+- `access-control.users.read`
+- `sales-channel.bill-items.create`
+- `catalog.brands.read`
+- `inventory.purchase-orders.complete`
+- `operations.settings.update`
+- `reports.customers.read`
+
+Khong dung namespace cu:
+
+- `sales.orders.read`
+
+## 17. Important Implementation Notes
+
+- Payload va response trong file nay uu tien theo ten cot DB.
+- Khong co `DELETE /bills/{id}`.
+- `bill item` dung sub-resource CRUD.
+- `cash_transactions` chi duoc full update khi `status = DRAFT`.
+- `purchase_order complete` phai tao `stock_transaction` va `supplier_debt_transaction`.
+- `stock_write_off` khong tao `cash_transaction`.
+- `employee deactivate` phai disable `users.is_active` va revoke `refresh_tokens`.
+- `customer payment` khong duoc vuot `debt_balance`.
+- `stock_check` da `BALANCED` thi immutable.
+- `category` toi da 3 cap.
+- `tenant` moi phai duoc seed `settings`, `default_unit`, `code_sequences`.

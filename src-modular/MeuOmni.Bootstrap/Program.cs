@@ -1,8 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.OpenApi.Models;
+using MeuOmni.Bootstrap;
+using MeuOmni.BuildingBlocks.Idempotency;
 using MeuOmni.BuildingBlocks.Modules;
 using MeuOmni.BuildingBlocks.Querying;
 using MeuOmni.BuildingBlocks.Security;
+using MeuOmni.BuildingBlocks.Web;
 using MeuOmni.Modules.AccessControl.Api.Controllers;
 using MeuOmni.Modules.AccessControl.Infrastructure;
 using MeuOmni.Modules.AccessControl.Infrastructure.Persistence;
@@ -36,14 +40,52 @@ using MeuOmni.Modules.SimpleCommerce.Infrastructure.Persistence;
 using MeuOmni.Modules.Suppliers.Api.Controllers;
 using MeuOmni.Modules.Suppliers.Infrastructure;
 using MeuOmni.Modules.Suppliers.Infrastructure.Persistence;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddAuthentication();
 builder.Services.AddMeuOmniRequestSecurity();
 builder.Services.AddMeuOmniQuerying();
+builder.Services.AddScoped<IIdempotencyStoreResolver, ModuleIdempotencyStoreResolver>();
+builder.Services.Configure<Microsoft.AspNetCore.Http.Json.JsonOptions>(options =>
+{
+    options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
+    options.SerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower;
+    options.SerializerOptions.PropertyNameCaseInsensitive = true;
+    options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+});
 builder.Services
-    .AddControllers()
+    .AddControllers(options =>
+    {
+        options.Filters.Add<ApiResponseEnvelopeFilter>();
+    })
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var errors = context.ModelState
+                .Where(pair => pair.Value?.Errors.Count > 0)
+                .SelectMany(pair => pair.Value!.Errors.Select(error =>
+                    new ApiErrorItem(pair.Key, string.IsNullOrWhiteSpace(error.ErrorMessage) ? "Validation error" : error.ErrorMessage)))
+                .ToArray();
+
+            return new BadRequestObjectResult(ApiResponseFactory.Error(
+                context.HttpContext,
+                StatusCodes.Status400BadRequest,
+                "Validation error",
+                "validation_error",
+                errors));
+        };
+    })
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
+        options.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower;
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+        options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+    })
     .AddApplicationPart(typeof(UsersController).Assembly)
     .AddApplicationPart(typeof(SalesOrdersController).Assembly)
     .AddApplicationPart(typeof(CustomersController).Assembly)
@@ -92,20 +134,22 @@ var app = builder.Build();
 await EnsureModuleDatabasesCreatedAsync(app);
 
 app.UseRouting();
+app.UseMiddleware<ApiExceptionMiddleware>();
 app.UseAuthentication();
 app.UseMeuOmniRequestSecurity();
+app.UseMiddleware<IdempotencyMiddleware>();
 
 app.UseSwagger();
 app.UseSwaggerUI();
 
 app.MapControllers();
-app.MapGet("/", () => Results.Ok(new
+app.MapGet("/", (HttpContext context) => Results.Json(ApiResponseFactory.Success(context, new
 {
     service = "meu-omni-modular",
     architecture = "modular-monolith",
     databaseStrategy = "database-per-module",
     modules = modules.Select(x => x.ModuleName).ToArray()
-}));
+}, StatusCodes.Status200OK)));
 
 app.Run();
 

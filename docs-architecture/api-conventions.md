@@ -354,27 +354,36 @@ Ví dụ:
 
 Các request API protected hiện dùng:
 
-- header `X-Tenant-Id`
-- token claim cho user, role, permission
+- token claim cho tenant, user, role, permission
+- header `X-Tenant-Id` chỉ cho cross-tenant override đặc quyền
 
 Ý nghĩa:
 
-- `X-Tenant-Id`: tenant hiện tại, bắt buộc cho `/api/*`
+- `tenant_id`: tenant hiện tại của request protected
 - `sub` hoặc `nameidentifier`: định danh user hiện tại
 - `role` hoặc `roles`: danh sách role của user
 - `permission` hoặc `permissions`: danh sách permission của user
+- `X-Tenant-Id`: chỉ dùng khi principal được phép override tenant cho luồng cross-tenant
 
 Quy ước:
 
+- không yêu cầu client user thông thường gửi `X-Tenant-Id`
 - không gửi `X-Roles`
 - không gửi `X-Permissions`
 - ưu tiên đọc `UserId` từ token claim, chỉ fallback `X-User-Id` khi có upstream auth đặc thù chưa map claim
+- nếu có `X-Tenant-Id` và khác `tenant_id` trong token, middleware phải có guard role hoặc permission cross-tenant trước khi chấp nhận
 
-Ví dụ:
+Ví dụ chuẩn cho user thông thường:
 
 ```http
 Authorization: Bearer <access-token>
-X-Tenant-Id: tenant-a
+```
+
+Ví dụ chuẩn cho cross-tenant override đặc quyền:
+
+```http
+Authorization: Bearer <access-token>
+X-Tenant-Id: tenant-b
 ```
 
 Ví dụ payload claim trong token:
@@ -382,6 +391,7 @@ Ví dụ payload claim trong token:
 ```json
 {
   "sub": "user-001",
+  "tenant_id": "tenant-a",
   "role": ["Admin", "Cashier"],
   "permission": [
     "sales-channel.orders.read",

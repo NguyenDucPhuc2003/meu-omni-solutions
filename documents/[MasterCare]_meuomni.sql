@@ -21,22 +21,28 @@ $$ LANGUAGE plpgsql;
 -- =========================================================
 
 CREATE TYPE gender_type AS ENUM ('MALE', 'FEMALE', 'OTHER', 'UNKNOWN');
+CREATE TYPE customer_type AS ENUM ('INDIVIDUAL', 'COMPANY');
 CREATE TYPE shift_status AS ENUM ('OPEN', 'CLOSED');
-CREATE TYPE bill_status AS ENUM ('DRAFT', 'HELD', 'PENDING_PAYMENT', 'COMPLETED', 'CANCELED');
+CREATE TYPE bill_status AS ENUM ('DRAFT', 'HELD', 'PENDING_PAYMENT', 'COMPLETED', 'CANCELED', 'DISCARDED');
 CREATE TYPE payment_summary_status AS ENUM ('UNPAID', 'PARTIAL', 'PAID', 'REFUNDED');
 CREATE TYPE payment_method AS ENUM ('CASH', 'BANK_TRANSFER', 'CARD', 'E_WALLET', 'DEBT_OFFSET', 'OTHER');
-CREATE TYPE transaction_status AS ENUM ('ACTIVE', 'CANCELED');
+CREATE TYPE transaction_status AS ENUM ('DRAFT', 'ACTIVE', 'CANCELED');
 CREATE TYPE return_type AS ENUM ('RETURN', 'EXCHANGE');
 CREATE TYPE return_status AS ENUM ('DRAFT', 'COMPLETED', 'CANCELED');
+CREATE TYPE cost_method_type AS ENUM ('FIXED', 'WEIGHTED_AVERAGE');
 
 CREATE TYPE stock_txn_type AS ENUM (
   'PURCHASE_IN',
+  'PURCHASE_RETURN_OUT',
   'SALE_OUT',
   'RETURN_IN',
   'CANCEL_IN',
   'ADJUST_IN',
   'ADJUST_OUT',
   'TRANSFER',
+  'STOCK_CHECK_IN',
+  'STOCK_CHECK_OUT',
+  'WRITE_OFF_OUT',
   'OPENING_BALANCE'
 );
 
@@ -64,6 +70,12 @@ CREATE TYPE attendance_source_type AS ENUM ('MANUAL', 'POS_SHIFT', 'SCHEDULE');
 CREATE TYPE attendance_status AS ENUM ('PRESENT', 'ABSENT', 'LATE', 'LEAVE', 'OFF');
 CREATE TYPE payroll_period_status AS ENUM ('OPEN', 'CLOSED');
 CREATE TYPE payroll_status AS ENUM ('DRAFT', 'CONFIRMED', 'PAID', 'CANCELED');
+CREATE TYPE purchase_order_status AS ENUM ('DRAFT', 'CONFIRMED', 'COMPLETED', 'CANCELED');
+CREATE TYPE purchase_return_status AS ENUM ('DRAFT', 'COMPLETED', 'CANCELED');
+CREATE TYPE stock_check_status AS ENUM ('DRAFT', 'BALANCED', 'CANCELED');
+CREATE TYPE stock_write_off_status AS ENUM ('DRAFT', 'COMPLETED', 'CANCELED');
+CREATE TYPE webhook_status AS ENUM ('ACTIVE', 'INACTIVE');
+CREATE TYPE notification_status AS ENUM ('UNREAD', 'READ');
 
 -- =========================================================
 -- Tenant / access control
@@ -120,6 +132,17 @@ CREATE TRIGGER trg_users_updated_at
 BEFORE UPDATE ON users
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- BR-AUTH-08:
+-- `email` va `phone` cua users phai unique toan he thong.
+-- Email dung unique index tren LOWER(email) de tranh trung khac hoa thuong.
+CREATE UNIQUE INDEX uq_users_email_global_not_null
+  ON users(LOWER(email))
+  WHERE email IS NOT NULL;
+
+CREATE UNIQUE INDEX uq_users_phone_global_not_null
+  ON users(phone)
+  WHERE phone IS NOT NULL;
+
 CREATE TABLE roles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
@@ -162,6 +185,88 @@ CREATE TABLE role_permissions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (role_id, permission_id)
 );
+
+CREATE TABLE refresh_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_id UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  family_id UUID NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  replaced_by_token_id UUID,
+  revoke_reason TEXT,
+  created_by_ip INET,
+  user_agent TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_refresh_tokens_user_active
+  ON refresh_tokens(user_id, expires_at)
+  WHERE revoked_at IS NULL;
+
+CREATE TABLE password_resets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  requested_ip INET,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_password_resets_user_active
+  ON password_resets(user_id, expires_at)
+  WHERE used_at IS NULL;
+
+CREATE TABLE idempotency_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  idempotency_key VARCHAR(120) NOT NULL,
+  request_path VARCHAR(255) NOT NULL,
+  request_hash TEXT NOT NULL,
+  resource_type VARCHAR(100),
+  response_status_code INT,
+  response_body JSONB,
+  locked_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_idempotency_keys_tenant_key UNIQUE (tenant_id, idempotency_key)
+);
+
+CREATE TABLE auth_login_attempts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
+  username VARCHAR(100) NOT NULL,
+  ip_address INET,
+  is_success BOOLEAN NOT NULL DEFAULT FALSE,
+  failure_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_auth_login_attempts_lookup
+  ON auth_login_attempts(tenant_id, username, created_at DESC);
+
+CREATE TABLE code_sequences (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  resource_name VARCHAR(100) NOT NULL,
+  prefix VARCHAR(20) NOT NULL,
+  current_value BIGINT NOT NULL DEFAULT 0,
+  padding INT NOT NULL DEFAULT 6,
+  reset_policy VARCHAR(20) NOT NULL DEFAULT 'NONE',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_code_sequences_tenant_resource UNIQUE (tenant_id, resource_name)
+);
+
+CREATE TRIGGER trg_code_sequences_updated_at
+BEFORE UPDATE ON code_sequences
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- =========================================================
 -- Master data
@@ -269,10 +374,45 @@ CREATE TRIGGER trg_units_updated_at
 BEFORE UPDATE ON units
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+CREATE TABLE brands (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  code VARCHAR(50) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_brands_tenant_code UNIQUE (tenant_id, code)
+);
+
+CREATE TRIGGER trg_brands_updated_at
+BEFORE UPDATE ON brands
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE product_attributes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  code VARCHAR(50) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  value_type VARCHAR(30) NOT NULL DEFAULT 'TEXT',
+  options_json JSONB,
+  is_variant_defining BOOLEAN NOT NULL DEFAULT FALSE,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_product_attributes_tenant_code UNIQUE (tenant_id, code)
+);
+
+CREATE TRIGGER trg_product_attributes_updated_at
+BEFORE UPDATE ON product_attributes
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 CREATE TABLE products (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
   category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+  brand_id UUID REFERENCES brands(id) ON DELETE RESTRICT,
   unit_id UUID REFERENCES units(id) ON DELETE SET NULL,
   code VARCHAR(50) NOT NULL,
   sku VARCHAR(100) NOT NULL,
@@ -281,6 +421,7 @@ CREATE TABLE products (
   description TEXT,
   cost_price NUMERIC(18,2) NOT NULL DEFAULT 0,
   sell_price NUMERIC(18,2) NOT NULL DEFAULT 0,
+  has_variants BOOLEAN NOT NULL DEFAULT FALSE,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   allow_negative_stock BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -312,6 +453,30 @@ CREATE TABLE product_prices (
 
 CREATE TRIGGER trg_product_prices_updated_at
 BEFORE UPDATE ON product_prices
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE product_variants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  sku VARCHAR(100) NOT NULL,
+  barcode VARCHAR(100),
+  name VARCHAR(255),
+  attribute_values JSONB NOT NULL DEFAULT '{}'::jsonb,
+  cost_price NUMERIC(18,2) NOT NULL DEFAULT 0,
+  sell_price NUMERIC(18,2) NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_product_variants_tenant_sku UNIQUE (tenant_id, sku)
+);
+
+CREATE UNIQUE INDEX uq_product_variants_tenant_barcode_not_null
+  ON product_variants(tenant_id, barcode)
+  WHERE barcode IS NOT NULL;
+
+CREATE TRIGGER trg_product_variants_updated_at
+BEFORE UPDATE ON product_variants
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TABLE warehouses (
@@ -349,6 +514,22 @@ CREATE TABLE devices (
 CREATE TRIGGER trg_devices_updated_at
 BEFORE UPDATE ON devices
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+ALTER TABLE customers
+  ADD COLUMN customer_type customer_type NOT NULL DEFAULT 'INDIVIDUAL',
+  ADD COLUMN company_name VARCHAR(255),
+  ADD COLUMN tax_code VARCHAR(50),
+  ADD COLUMN address_line VARCHAR(255),
+  ADD COLUMN ward VARCHAR(100),
+  ADD COLUMN district VARCHAR(100),
+  ADD COLUMN city VARCHAR(100);
+
+ALTER TABLE suppliers
+  ADD COLUMN tax_code VARCHAR(50),
+  ADD COLUMN address_line VARCHAR(255),
+  ADD COLUMN ward VARCHAR(100),
+  ADD COLUMN district VARCHAR(100),
+  ADD COLUMN city VARCHAR(100);
 
 -- =========================================================
 -- Employee module
@@ -557,6 +738,40 @@ CREATE TRIGGER trg_returns_updated_at
 BEFORE UPDATE ON returns
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+CREATE TABLE sales_channel_idempotency_request (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  request_method VARCHAR(16) NOT NULL,
+  request_path VARCHAR(255) NOT NULL,
+  idempotency_key VARCHAR(128) NOT NULL,
+  request_hash VARCHAR(64) NOT NULL,
+  state VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+  response_status_code INT,
+  response_content_type VARCHAR(128),
+  response_body TEXT,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_sales_channel_idempotency_request UNIQUE (tenant_id, request_method, request_path, idempotency_key)
+);
+
+CREATE INDEX idx_sales_channel_idempotency_request_created_at
+  ON sales_channel_idempotency_request(tenant_id, created_at DESC);
+
+CREATE TRIGGER trg_sales_channel_idempotency_request_updated_at
+BEFORE UPDATE ON sales_channel_idempotency_request
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+ALTER TABLE pos_bills
+  ADD COLUMN held_at TIMESTAMPTZ,
+  ADD COLUMN held_expires_at TIMESTAMPTZ,
+  ADD COLUMN resumed_at TIMESTAMPTZ,
+  ADD COLUMN discarded_at TIMESTAMPTZ,
+  ADD COLUMN discarded_reason TEXT;
+
+CREATE INDEX idx_pos_bills_tenant_status
+  ON pos_bills(tenant_id, status, created_at DESC);
+
 CREATE TABLE return_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
@@ -738,6 +953,30 @@ CREATE TRIGGER trg_stock_transaction_items_updated_at
 BEFORE UPDATE ON stock_transaction_items
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+CREATE TABLE inventory_idempotency_request (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  request_method VARCHAR(16) NOT NULL,
+  request_path VARCHAR(255) NOT NULL,
+  idempotency_key VARCHAR(128) NOT NULL,
+  request_hash VARCHAR(64) NOT NULL,
+  state VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+  response_status_code INT,
+  response_content_type VARCHAR(128),
+  response_body TEXT,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_inventory_idempotency_request UNIQUE (tenant_id, request_method, request_path, idempotency_key)
+);
+
+CREATE INDEX idx_inventory_idempotency_request_created_at
+  ON inventory_idempotency_request(tenant_id, created_at DESC);
+
+CREATE TRIGGER trg_inventory_idempotency_request_updated_at
+BEFORE UPDATE ON inventory_idempotency_request
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 CREATE OR REPLACE FUNCTION apply_stock_transaction_item()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -843,6 +1082,196 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_apply_stock_transaction_item
 AFTER INSERT ON stock_transaction_items
 FOR EACH ROW EXECUTE FUNCTION apply_stock_transaction_item();
+
+CREATE TABLE purchase_orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  store_id UUID REFERENCES stores(id) ON DELETE SET NULL,
+  warehouse_id UUID NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
+  supplier_id UUID NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+  purchase_order_no VARCHAR(50) NOT NULL,
+  status purchase_order_status NOT NULL DEFAULT 'DRAFT',
+  payment_status payment_summary_status NOT NULL DEFAULT 'UNPAID',
+  subtotal NUMERIC(18,2) NOT NULL DEFAULT 0,
+  discount_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  tax_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  total_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  paid_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  note TEXT,
+  confirmed_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  canceled_at TIMESTAMPTZ,
+  canceled_reason TEXT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_purchase_orders_tenant_no UNIQUE (tenant_id, purchase_order_no)
+);
+
+CREATE INDEX idx_purchase_orders_tenant_created_at
+  ON purchase_orders(tenant_id, created_at DESC);
+
+CREATE TRIGGER trg_purchase_orders_updated_at
+BEFORE UPDATE ON purchase_orders
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE purchase_order_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  purchase_order_id UUID NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  line_no INT NOT NULL,
+  quantity NUMERIC(18,3) NOT NULL CHECK (quantity > 0),
+  received_quantity NUMERIC(18,3) NOT NULL DEFAULT 0 CHECK (received_quantity >= 0),
+  unit_cost NUMERIC(18,2) NOT NULL DEFAULT 0,
+  line_total NUMERIC(18,2) NOT NULL DEFAULT 0,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_purchase_order_items_line UNIQUE (tenant_id, purchase_order_id, line_no)
+);
+
+CREATE TRIGGER trg_purchase_order_items_updated_at
+BEFORE UPDATE ON purchase_order_items
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE purchase_order_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  purchase_order_id UUID NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  cash_transaction_id UUID,
+  status transaction_status NOT NULL DEFAULT 'ACTIVE',
+  payment_method payment_method NOT NULL,
+  amount NUMERIC(18,2) NOT NULL CHECK (amount > 0),
+  reference_no VARCHAR(100),
+  note TEXT,
+  paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TRIGGER trg_purchase_order_payments_updated_at
+BEFORE UPDATE ON purchase_order_payments
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE purchase_returns (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  purchase_order_id UUID NOT NULL REFERENCES purchase_orders(id) ON DELETE RESTRICT,
+  supplier_id UUID NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+  warehouse_id UUID NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
+  purchase_return_no VARCHAR(50) NOT NULL,
+  status purchase_return_status NOT NULL DEFAULT 'DRAFT',
+  total_return_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  refund_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+  note TEXT,
+  completed_at TIMESTAMPTZ,
+  canceled_at TIMESTAMPTZ,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_purchase_returns_tenant_no UNIQUE (tenant_id, purchase_return_no)
+);
+
+CREATE TRIGGER trg_purchase_returns_updated_at
+BEFORE UPDATE ON purchase_returns
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE purchase_return_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  purchase_return_id UUID NOT NULL REFERENCES purchase_returns(id) ON DELETE CASCADE,
+  purchase_order_item_id UUID NOT NULL REFERENCES purchase_order_items(id) ON DELETE RESTRICT,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  line_no INT NOT NULL,
+  quantity NUMERIC(18,3) NOT NULL CHECK (quantity > 0),
+  return_price NUMERIC(18,2) NOT NULL DEFAULT 0,
+  line_total NUMERIC(18,2) NOT NULL DEFAULT 0,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_purchase_return_items_line UNIQUE (tenant_id, purchase_return_id, line_no)
+);
+
+CREATE TRIGGER trg_purchase_return_items_updated_at
+BEFORE UPDATE ON purchase_return_items
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE stock_checks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  warehouse_id UUID NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
+  stock_check_no VARCHAR(50) NOT NULL,
+  status stock_check_status NOT NULL DEFAULT 'DRAFT',
+  note TEXT,
+  balanced_at TIMESTAMPTZ,
+  balanced_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_stock_checks_tenant_no UNIQUE (tenant_id, stock_check_no)
+);
+
+CREATE TRIGGER trg_stock_checks_updated_at
+BEFORE UPDATE ON stock_checks
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE stock_check_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  stock_check_id UUID NOT NULL REFERENCES stock_checks(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  line_no INT NOT NULL,
+  system_quantity NUMERIC(18,3) NOT NULL DEFAULT 0,
+  actual_quantity NUMERIC(18,3) NOT NULL DEFAULT 0,
+  difference_quantity NUMERIC(18,3) NOT NULL DEFAULT 0,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_stock_check_items_line UNIQUE (tenant_id, stock_check_id, line_no)
+);
+
+CREATE TRIGGER trg_stock_check_items_updated_at
+BEFORE UPDATE ON stock_check_items
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE stock_write_offs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  warehouse_id UUID NOT NULL REFERENCES warehouses(id) ON DELETE RESTRICT,
+  stock_write_off_no VARCHAR(50) NOT NULL,
+  status stock_write_off_status NOT NULL DEFAULT 'DRAFT',
+  reason TEXT NOT NULL,
+  note TEXT,
+  completed_at TIMESTAMPTZ,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_stock_write_offs_tenant_no UNIQUE (tenant_id, stock_write_off_no)
+);
+
+CREATE TRIGGER trg_stock_write_offs_updated_at
+BEFORE UPDATE ON stock_write_offs
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE stock_write_off_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  stock_write_off_id UUID NOT NULL REFERENCES stock_write_offs(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  line_no INT NOT NULL,
+  quantity NUMERIC(18,3) NOT NULL CHECK (quantity > 0),
+  cost_price_at_time NUMERIC(18,2) NOT NULL DEFAULT 0,
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_stock_write_off_items_line UNIQUE (tenant_id, stock_write_off_id, line_no)
+);
+
+CREATE TRIGGER trg_stock_write_off_items_updated_at
+BEFORE UPDATE ON stock_write_off_items
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- =========================================================
 -- Scheduling / attendance / payroll
@@ -1048,6 +1477,36 @@ CREATE TABLE cash_reconciliations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE purchase_order_payments
+  ADD CONSTRAINT fk_purchase_order_payments_cash_transaction
+  FOREIGN KEY (cash_transaction_id)
+  REFERENCES cash_transactions(id)
+  ON DELETE SET NULL;
+
+CREATE TABLE cashbook_idempotency_request (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  request_method VARCHAR(16) NOT NULL,
+  request_path VARCHAR(255) NOT NULL,
+  idempotency_key VARCHAR(128) NOT NULL,
+  request_hash VARCHAR(64) NOT NULL,
+  state VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+  response_status_code INT,
+  response_content_type VARCHAR(128),
+  response_body TEXT,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_cashbook_idempotency_request UNIQUE (tenant_id, request_method, request_path, idempotency_key)
+);
+
+CREATE INDEX idx_cashbook_idempotency_request_created_at
+  ON cashbook_idempotency_request(tenant_id, created_at DESC);
+
+CREATE TRIGGER trg_cashbook_idempotency_request_updated_at
+BEFORE UPDATE ON cashbook_idempotency_request
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 -- =========================================================
 -- Customer and supplier debt ledger
 -- =========================================================
@@ -1100,12 +1559,714 @@ CREATE TABLE audit_logs (
   before_data JSONB,
   after_data JSONB,
   metadata JSONB,
+  trace_id VARCHAR(100),
   ip_address INET,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX idx_audit_logs_tenant_created_at
   ON audit_logs(tenant_id, created_at DESC);
+
+-- =========================================================
+-- Settings / files / platform
+-- =========================================================
+
+CREATE TABLE settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  cost_method cost_method_type NOT NULL DEFAULT 'WEIGHTED_AVERAGE',
+  allow_negative_stock BOOLEAN NOT NULL DEFAULT FALSE,
+  auto_barcode BOOLEAN NOT NULL DEFAULT TRUE,
+  default_unit_id UUID REFERENCES units(id) ON DELETE SET NULL,
+  store_name VARCHAR(255),
+  store_phone VARCHAR(50),
+  store_logo_file_id UUID,
+  receipt_header TEXT,
+  receipt_footer TEXT,
+  session_timeout INT NOT NULL DEFAULT 120,
+  max_login_attempts INT NOT NULL DEFAULT 5,
+  lock_duration INT NOT NULL DEFAULT 15,
+  password_min_length INT NOT NULL DEFAULT 8,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_settings_tenant UNIQUE (tenant_id)
+);
+
+CREATE TRIGGER trg_settings_updated_at
+BEFORE UPDATE ON settings
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE files (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  original_name VARCHAR(255) NOT NULL,
+  stored_name VARCHAR(255) NOT NULL,
+  content_type VARCHAR(150) NOT NULL,
+  extension VARCHAR(20),
+  size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+  storage_provider VARCHAR(50) NOT NULL DEFAULT 'LOCAL',
+  storage_key TEXT NOT NULL,
+  checksum_sha256 VARCHAR(128),
+  uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_files_tenant_created_at
+  ON files(tenant_id, created_at DESC);
+
+CREATE TABLE webhooks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name VARCHAR(255) NOT NULL,
+  endpoint_url TEXT NOT NULL,
+  event_codes TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  secret_key TEXT NOT NULL,
+  status webhook_status NOT NULL DEFAULT 'ACTIVE',
+  last_called_at TIMESTAMPTZ,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TRIGGER trg_webhooks_updated_at
+BEFORE UPDATE ON webhooks
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  notification_type VARCHAR(50) NOT NULL DEFAULT 'SYSTEM',
+  title VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  data JSONB,
+  status notification_status NOT NULL DEFAULT 'UNREAD',
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_notifications_user_status
+  ON notifications(tenant_id, user_id, status, created_at DESC);
+
+ALTER TABLE settings
+  ADD CONSTRAINT fk_settings_store_logo_file
+  FOREIGN KEY (store_logo_file_id)
+  REFERENCES files(id)
+  ON DELETE SET NULL;
+
+-- =========================================================
+-- Business rule triggers aligned with API design
+-- =========================================================
+
+CREATE OR REPLACE FUNCTION seed_tenant_defaults()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_default_unit_id UUID;
+BEGIN
+  INSERT INTO units(tenant_id, code, name, description)
+  VALUES (NEW.id, 'DEFAULT', 'Chiec', 'Don vi tinh mac dinh')
+  RETURNING id INTO v_default_unit_id;
+
+  INSERT INTO settings(tenant_id, default_unit_id, store_name, store_phone)
+  VALUES (NEW.id, v_default_unit_id, NEW.name, NULL);
+
+  INSERT INTO code_sequences(tenant_id, resource_name, prefix, current_value, padding)
+  VALUES
+    (NEW.id, 'product', 'SP', 0, 6),
+    (NEW.id, 'bill', 'BILL', 0, 6),
+    (NEW.id, 'purchase-order', 'PO', 0, 6),
+    (NEW.id, 'purchase-return', 'PR', 0, 6),
+    (NEW.id, 'stock-check', 'SC', 0, 6),
+    (NEW.id, 'stock-write-off', 'SWO', 0, 6),
+    (NEW.id, 'customer', 'CUS', 0, 6),
+    (NEW.id, 'supplier', 'SUP', 0, 6),
+    (NEW.id, 'employee', 'EMP', 0, 6);
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_seed_tenant_defaults
+AFTER INSERT ON tenants
+FOR EACH ROW EXECUTE FUNCTION seed_tenant_defaults();
+
+CREATE OR REPLACE FUNCTION validate_category_depth()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_parent_id UUID;
+  v_depth INT := 1;
+BEGIN
+  IF NEW.parent_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.parent_id = NEW.id THEN
+    RAISE EXCEPTION 'Category cannot reference itself as parent';
+  END IF;
+
+  v_parent_id := NEW.parent_id;
+
+  WHILE v_parent_id IS NOT NULL LOOP
+    v_depth := v_depth + 1;
+    IF v_depth > 3 THEN
+      RAISE EXCEPTION 'Category depth cannot exceed 3 levels';
+    END IF;
+
+    SELECT parent_id
+    INTO v_parent_id
+    FROM categories
+    WHERE id = v_parent_id;
+  END LOOP;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validate_category_depth
+BEFORE INSERT OR UPDATE ON categories
+FOR EACH ROW EXECUTE FUNCTION validate_category_depth();
+
+CREATE OR REPLACE FUNCTION guard_delete_category_in_use()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM categories WHERE parent_id = OLD.id) THEN
+    RAISE EXCEPTION 'Cannot delete category % because it has child categories', OLD.id;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM products WHERE category_id = OLD.id) THEN
+    RAISE EXCEPTION 'Cannot delete category % because it is referenced by products', OLD.id;
+  END IF;
+
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_guard_delete_category_in_use
+BEFORE DELETE ON categories
+FOR EACH ROW EXECUTE FUNCTION guard_delete_category_in_use();
+
+CREATE OR REPLACE FUNCTION guard_delete_unit_in_use()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM products WHERE unit_id = OLD.id) THEN
+    RAISE EXCEPTION 'Cannot delete unit % because it is referenced by products', OLD.id;
+  END IF;
+
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_guard_delete_unit_in_use
+BEFORE DELETE ON units
+FOR EACH ROW EXECUTE FUNCTION guard_delete_unit_in_use();
+
+CREATE OR REPLACE FUNCTION guard_delete_brand_in_use()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM products WHERE brand_id = OLD.id) THEN
+    RAISE EXCEPTION 'Cannot delete brand % because it is referenced by products', OLD.id;
+  END IF;
+
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_guard_delete_brand_in_use
+BEFORE DELETE ON brands
+FOR EACH ROW EXECUTE FUNCTION guard_delete_brand_in_use();
+
+CREATE OR REPLACE FUNCTION refresh_bill_amounts()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_bill_id UUID;
+  v_subtotal NUMERIC(18,2);
+  v_discount NUMERIC(18,2);
+  v_surcharge NUMERIC(18,2);
+BEGIN
+  v_bill_id := CASE
+    WHEN TG_OP = 'DELETE' THEN OLD.bill_id
+    ELSE NEW.bill_id
+  END;
+
+  SELECT
+    COALESCE(SUM(quantity * unit_price), 0),
+    COALESCE(SUM(discount_amount), 0),
+    COALESCE(SUM(surcharge_amount), 0)
+  INTO v_subtotal, v_discount, v_surcharge
+  FROM pos_bill_items
+  WHERE bill_id = v_bill_id;
+
+  UPDATE pos_bills
+  SET subtotal = v_subtotal,
+      discount_amount = v_discount,
+      surcharge_amount = v_surcharge,
+      total_amount = GREATEST(0, v_subtotal - v_discount + v_surcharge + tax_amount),
+      updated_at = NOW()
+  WHERE id = v_bill_id;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_refresh_bill_amounts_ins
+AFTER INSERT ON pos_bill_items
+FOR EACH ROW EXECUTE FUNCTION refresh_bill_amounts();
+
+CREATE TRIGGER trg_refresh_bill_amounts_upd
+AFTER UPDATE ON pos_bill_items
+FOR EACH ROW EXECUTE FUNCTION refresh_bill_amounts();
+
+CREATE TRIGGER trg_refresh_bill_amounts_del
+AFTER DELETE ON pos_bill_items
+FOR EACH ROW EXECUTE FUNCTION refresh_bill_amounts();
+
+CREATE OR REPLACE FUNCTION ensure_bill_completed_rules()
+RETURNS TRIGGER AS $$
+DECLARE
+  item_count INT;
+  payment_count INT;
+  held_count INT;
+BEGIN
+  IF NEW.status = 'COMPLETED' THEN
+    SELECT COUNT(*) INTO item_count
+    FROM pos_bill_items
+    WHERE bill_id = NEW.id;
+
+    IF item_count = 0 THEN
+      RAISE EXCEPTION 'Bill % must have at least 1 item before completion', NEW.id;
+    END IF;
+
+    IF NEW.shift_id IS NULL THEN
+      RAISE EXCEPTION 'Bill % must belong to a shift', NEW.id;
+    END IF;
+
+    IF NEW.paid_amount < NEW.total_amount AND NEW.customer_id IS NULL THEN
+      RAISE EXCEPTION 'Bill % requires customer_id when paid amount is less than total amount', NEW.id;
+    END IF;
+  END IF;
+
+  IF NEW.status = 'HELD' THEN
+    SELECT COUNT(*) INTO held_count
+    FROM pos_bills
+    WHERE tenant_id = NEW.tenant_id
+      AND status = 'HELD'
+      AND id <> COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid)
+      AND COALESCE(held_expires_at, NOW() + INTERVAL '1 second') > NOW();
+
+    IF held_count >= 20 THEN
+      RAISE EXCEPTION 'Tenant % cannot hold more than 20 active bills', NEW.tenant_id;
+    END IF;
+
+    NEW.held_at := COALESCE(NEW.held_at, NOW());
+    NEW.held_expires_at := COALESCE(NEW.held_expires_at, NEW.held_at + INTERVAL '24 hours');
+  END IF;
+
+  IF TG_OP = 'UPDATE' AND OLD.status = 'HELD' AND NEW.status <> 'HELD' THEN
+    NEW.resumed_at := NOW();
+  END IF;
+
+  IF NEW.status = 'DISCARDED' THEN
+    IF TG_OP = 'UPDATE' AND OLD.status <> 'DRAFT' THEN
+      RAISE EXCEPTION 'Only draft bills can be discarded';
+    END IF;
+
+    SELECT COUNT(*) INTO item_count
+    FROM pos_bill_items
+    WHERE bill_id = NEW.id;
+
+    SELECT COUNT(*) INTO payment_count
+    FROM payments
+    WHERE bill_id = NEW.id
+      AND status <> 'CANCELED';
+
+    IF item_count > 0 OR payment_count > 0 THEN
+      RAISE EXCEPTION 'Draft bill % cannot be discarded after having items or payments', NEW.id;
+    END IF;
+
+    NEW.discarded_at := COALESCE(NEW.discarded_at, NOW());
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION ensure_shift_close_rules()
+RETURNS TRIGGER AS $$
+DECLARE
+  pending_bill_count INT;
+BEGIN
+  IF NEW.status = 'CLOSED' AND COALESCE(OLD.status, 'OPEN') <> 'CLOSED' THEN
+    SELECT COUNT(*) INTO pending_bill_count
+    FROM pos_bills
+    WHERE shift_id = NEW.id
+      AND status IN ('DRAFT', 'HELD');
+
+    IF pending_bill_count > 0 THEN
+      RAISE EXCEPTION 'Cannot close shift % because draft or held bills still exist', NEW.id;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ensure_shift_close_rules
+BEFORE UPDATE ON shifts
+FOR EACH ROW EXECUTE FUNCTION ensure_shift_close_rules();
+
+CREATE OR REPLACE FUNCTION refresh_purchase_order_amounts()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_purchase_order_id UUID;
+  v_subtotal NUMERIC(18,2);
+BEGIN
+  v_purchase_order_id := CASE
+    WHEN TG_OP = 'DELETE' THEN OLD.purchase_order_id
+    ELSE NEW.purchase_order_id
+  END;
+
+  SELECT COALESCE(SUM(line_total), 0)
+  INTO v_subtotal
+  FROM purchase_order_items
+  WHERE purchase_order_id = v_purchase_order_id;
+
+  UPDATE purchase_orders
+  SET subtotal = v_subtotal,
+      total_amount = GREATEST(0, v_subtotal - discount_amount + tax_amount),
+      updated_at = NOW()
+  WHERE id = v_purchase_order_id;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_refresh_purchase_order_amounts_ins
+AFTER INSERT ON purchase_order_items
+FOR EACH ROW EXECUTE FUNCTION refresh_purchase_order_amounts();
+
+CREATE TRIGGER trg_refresh_purchase_order_amounts_upd
+AFTER UPDATE ON purchase_order_items
+FOR EACH ROW EXECUTE FUNCTION refresh_purchase_order_amounts();
+
+CREATE TRIGGER trg_refresh_purchase_order_amounts_del
+AFTER DELETE ON purchase_order_items
+FOR EACH ROW EXECUTE FUNCTION refresh_purchase_order_amounts();
+
+CREATE OR REPLACE FUNCTION refresh_purchase_order_paid_amount()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_purchase_order_id UUID;
+  v_paid NUMERIC(18,2);
+BEGIN
+  v_purchase_order_id := CASE
+    WHEN TG_OP = 'DELETE' THEN OLD.purchase_order_id
+    ELSE NEW.purchase_order_id
+  END;
+
+  SELECT COALESCE(SUM(amount), 0)
+  INTO v_paid
+  FROM purchase_order_payments
+  WHERE purchase_order_id = v_purchase_order_id
+    AND status = 'ACTIVE';
+
+  UPDATE purchase_orders
+  SET paid_amount = v_paid,
+      payment_status = CASE
+        WHEN v_paid = 0 THEN 'UNPAID'::payment_summary_status
+        WHEN v_paid < total_amount THEN 'PARTIAL'::payment_summary_status
+        ELSE 'PAID'::payment_summary_status
+      END,
+      updated_at = NOW()
+  WHERE id = v_purchase_order_id;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_refresh_purchase_order_paid_amount_ins
+AFTER INSERT ON purchase_order_payments
+FOR EACH ROW EXECUTE FUNCTION refresh_purchase_order_paid_amount();
+
+CREATE TRIGGER trg_refresh_purchase_order_paid_amount_upd
+AFTER UPDATE ON purchase_order_payments
+FOR EACH ROW EXECUTE FUNCTION refresh_purchase_order_paid_amount();
+
+CREATE TRIGGER trg_refresh_purchase_order_paid_amount_del
+AFTER DELETE ON purchase_order_payments
+FOR EACH ROW EXECUTE FUNCTION refresh_purchase_order_paid_amount();
+
+CREATE OR REPLACE FUNCTION refresh_purchase_return_amounts()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_purchase_return_id UUID;
+  v_total NUMERIC(18,2);
+BEGIN
+  v_purchase_return_id := CASE
+    WHEN TG_OP = 'DELETE' THEN OLD.purchase_return_id
+    ELSE NEW.purchase_return_id
+  END;
+
+  SELECT COALESCE(SUM(line_total), 0)
+  INTO v_total
+  FROM purchase_return_items
+  WHERE purchase_return_id = v_purchase_return_id;
+
+  UPDATE purchase_returns
+  SET total_return_amount = v_total,
+      updated_at = NOW()
+  WHERE id = v_purchase_return_id;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_refresh_purchase_return_amounts_ins
+AFTER INSERT ON purchase_return_items
+FOR EACH ROW EXECUTE FUNCTION refresh_purchase_return_amounts();
+
+CREATE TRIGGER trg_refresh_purchase_return_amounts_upd
+AFTER UPDATE ON purchase_return_items
+FOR EACH ROW EXECUTE FUNCTION refresh_purchase_return_amounts();
+
+CREATE TRIGGER trg_refresh_purchase_return_amounts_del
+AFTER DELETE ON purchase_return_items
+FOR EACH ROW EXECUTE FUNCTION refresh_purchase_return_amounts();
+
+CREATE OR REPLACE FUNCTION set_stock_check_item_difference()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.difference_quantity := NEW.actual_quantity - NEW.system_quantity;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_set_stock_check_item_difference
+BEFORE INSERT OR UPDATE ON stock_check_items
+FOR EACH ROW EXECUTE FUNCTION set_stock_check_item_difference();
+
+CREATE OR REPLACE FUNCTION prevent_modifying_balanced_stock_check()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_status stock_check_status;
+  v_stock_check_id UUID;
+BEGIN
+  v_stock_check_id := CASE
+    WHEN TG_OP = 'DELETE' THEN OLD.stock_check_id
+    ELSE NEW.stock_check_id
+  END;
+
+  SELECT status
+  INTO v_status
+  FROM stock_checks
+  WHERE id = v_stock_check_id;
+
+  IF v_status = 'BALANCED' THEN
+    RAISE EXCEPTION 'Balanced stock check cannot be modified';
+  END IF;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_prevent_modifying_balanced_stock_check_item_ins
+BEFORE INSERT OR UPDATE OR DELETE ON stock_check_items
+FOR EACH ROW EXECUTE FUNCTION prevent_modifying_balanced_stock_check();
+
+CREATE OR REPLACE FUNCTION prevent_updating_balanced_stock_check()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.status = 'BALANCED' THEN
+    RAISE EXCEPTION 'Balanced stock check header cannot be modified';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_prevent_updating_balanced_stock_check
+BEFORE UPDATE ON stock_checks
+FOR EACH ROW EXECUTE FUNCTION prevent_updating_balanced_stock_check();
+
+CREATE OR REPLACE FUNCTION validate_customer_debt_transaction()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_balance NUMERIC(18,2);
+BEGIN
+  SELECT COALESCE(SUM(
+    CASE
+      WHEN txn_type = 'INCREASE' THEN amount
+      ELSE -amount
+    END
+  ), 0)
+  INTO v_balance
+  FROM customer_debt_transactions
+  WHERE tenant_id = NEW.tenant_id
+    AND customer_id = NEW.customer_id
+    AND id <> COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid);
+
+  IF NEW.txn_type = 'PAYMENT' AND NEW.amount > v_balance THEN
+    RAISE EXCEPTION 'Customer debt payment cannot exceed current debt balance';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validate_customer_debt_transaction
+BEFORE INSERT OR UPDATE ON customer_debt_transactions
+FOR EACH ROW EXECUTE FUNCTION validate_customer_debt_transaction();
+
+CREATE OR REPLACE FUNCTION refresh_customer_debt_balance()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_customer_id UUID;
+BEGIN
+  v_customer_id := CASE
+    WHEN TG_OP = 'DELETE' THEN OLD.customer_id
+    ELSE NEW.customer_id
+  END;
+
+  UPDATE customers
+  SET debt_balance = COALESCE((
+        SELECT SUM(
+          CASE
+            WHEN txn_type = 'INCREASE' THEN amount
+            ELSE -amount
+          END
+        )
+        FROM customer_debt_transactions
+        WHERE customer_id = v_customer_id
+      ), 0),
+      updated_at = NOW()
+  WHERE id = v_customer_id;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_refresh_customer_debt_balance_ins
+AFTER INSERT ON customer_debt_transactions
+FOR EACH ROW EXECUTE FUNCTION refresh_customer_debt_balance();
+
+CREATE TRIGGER trg_refresh_customer_debt_balance_upd
+AFTER UPDATE ON customer_debt_transactions
+FOR EACH ROW EXECUTE FUNCTION refresh_customer_debt_balance();
+
+CREATE TRIGGER trg_refresh_customer_debt_balance_del
+AFTER DELETE ON customer_debt_transactions
+FOR EACH ROW EXECUTE FUNCTION refresh_customer_debt_balance();
+
+CREATE OR REPLACE FUNCTION validate_supplier_debt_transaction()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_balance NUMERIC(18,2);
+BEGIN
+  SELECT COALESCE(SUM(
+    CASE
+      WHEN txn_type = 'INCREASE' THEN amount
+      ELSE -amount
+    END
+  ), 0)
+  INTO v_balance
+  FROM supplier_debt_transactions
+  WHERE tenant_id = NEW.tenant_id
+    AND supplier_id = NEW.supplier_id
+    AND id <> COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000'::uuid);
+
+  IF NEW.txn_type = 'PAYMENT' AND NEW.amount > v_balance THEN
+    RAISE EXCEPTION 'Supplier debt payment cannot exceed current debt balance';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validate_supplier_debt_transaction
+BEFORE INSERT OR UPDATE ON supplier_debt_transactions
+FOR EACH ROW EXECUTE FUNCTION validate_supplier_debt_transaction();
+
+CREATE OR REPLACE FUNCTION refresh_supplier_debt_balance()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_supplier_id UUID;
+BEGIN
+  v_supplier_id := CASE
+    WHEN TG_OP = 'DELETE' THEN OLD.supplier_id
+    ELSE NEW.supplier_id
+  END;
+
+  UPDATE suppliers
+  SET debt_balance = COALESCE((
+        SELECT SUM(
+          CASE
+            WHEN txn_type = 'INCREASE' THEN amount
+            ELSE -amount
+          END
+        )
+        FROM supplier_debt_transactions
+        WHERE supplier_id = v_supplier_id
+      ), 0),
+      updated_at = NOW()
+  WHERE id = v_supplier_id;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_refresh_supplier_debt_balance_ins
+AFTER INSERT ON supplier_debt_transactions
+FOR EACH ROW EXECUTE FUNCTION refresh_supplier_debt_balance();
+
+CREATE TRIGGER trg_refresh_supplier_debt_balance_upd
+AFTER UPDATE ON supplier_debt_transactions
+FOR EACH ROW EXECUTE FUNCTION refresh_supplier_debt_balance();
+
+CREATE TRIGGER trg_refresh_supplier_debt_balance_del
+AFTER DELETE ON supplier_debt_transactions
+FOR EACH ROW EXECUTE FUNCTION refresh_supplier_debt_balance();
+
+CREATE OR REPLACE FUNCTION deactivate_employee_user_account()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.employment_status = 'ACTIVE' AND NEW.employment_status IN ('INACTIVE', 'RESIGNED') AND NEW.user_id IS NOT NULL THEN
+    UPDATE users
+    SET is_active = FALSE,
+        updated_at = NOW()
+    WHERE id = NEW.user_id;
+
+    UPDATE refresh_tokens
+    SET revoked_at = NOW(),
+        revoke_reason = 'EMPLOYEE_DEACTIVATED'
+    WHERE user_id = NEW.user_id
+      AND revoked_at IS NULL;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_deactivate_employee_user_account
+AFTER UPDATE ON employees
+FOR EACH ROW EXECUTE FUNCTION deactivate_employee_user_account();
+
+CREATE OR REPLACE FUNCTION guard_cash_transaction_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.status <> 'DRAFT' THEN
+    IF (to_jsonb(NEW) - 'updated_at' - 'status' - 'canceled_at' - 'canceled_reason')
+       <> (to_jsonb(OLD) - 'updated_at' - 'status' - 'canceled_at' - 'canceled_reason') THEN
+      RAISE EXCEPTION 'Only draft cash transactions can be fully updated; active rows should use cancel and recreate flow';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_guard_cash_transaction_update
+BEFORE UPDATE ON cash_transactions
+FOR EACH ROW EXECUTE FUNCTION guard_cash_transaction_update();
 
 -- =========================================================
 -- Seed permissions
@@ -1131,11 +2292,6 @@ INSERT INTO permissions(code, name, description) VALUES
 ('sales-channel.bills.read', 'Read bills', 'View bill list and detail'),
 ('sales-channel.bills.create', 'Create bills', 'Create bills'),
 ('sales-channel.bills.update', 'Update bills', 'Update bills'),
-('sales-channel.bills.delete', 'Delete bills', 'Delete draft bills'),
-('sales-channel.bills.add-item', 'Add bill item', 'Add item into bill'),
-('sales-channel.bills.update-item', 'Update bill item', 'Update item in bill'),
-('sales-channel.bills.remove-item', 'Remove bill item', 'Remove item from bill'),
-('sales-channel.bills.attach-customer', 'Attach customer', 'Attach customer to bill'),
 ('sales-channel.bills.apply-adjustment', 'Apply adjustment', 'Apply discount or surcharge'),
 ('sales-channel.bills.hold', 'Hold bill', 'Hold bill'),
 ('sales-channel.bills.resume', 'Resume bill', 'Resume held bill'),
@@ -1225,4 +2381,83 @@ INSERT INTO permissions(code, name, description) VALUES
 ('reports.supplier-debt.read', 'Read supplier debt reports', 'View supplier debt reports'),
 ('reports.employees.read', 'Read employee reports', 'View employee reports'),
 ('auditing.logs.read', 'Read audit logs', 'View audit logs')
+ON CONFLICT (code) DO NOTHING;
+
+DELETE FROM permissions
+WHERE code IN (
+  'sales-channel.bills.delete',
+  'sales-channel.bills.add-item',
+  'sales-channel.bills.update-item',
+  'sales-channel.bills.remove-item',
+  'sales-channel.bills.attach-customer'
+);
+
+INSERT INTO permissions(code, name, description) VALUES
+('sales-channel.bills.discard', 'Discard bills', 'Discard draft bills without items or payments'),
+('sales-channel.bill-items.create', 'Create bill items', 'Add items into bills'),
+('sales-channel.bill-items.update', 'Update bill items', 'Update items inside bills'),
+('sales-channel.bill-items.delete', 'Delete bill items', 'Remove items from bills'),
+
+('customers.customer-groups.read', 'Read customer groups', 'View customer groups'),
+('customers.customer-groups.create', 'Create customer groups', 'Create customer groups'),
+('customers.customer-groups.update', 'Update customer groups', 'Update customer groups'),
+('customers.customer-groups.delete', 'Delete customer groups', 'Delete customer groups'),
+('customers.statistics.read', 'Read customer statistics', 'View customer statistics'),
+
+('catalog.categories.read', 'Read categories', 'View categories'),
+('catalog.categories.create', 'Create categories', 'Create categories'),
+('catalog.categories.update', 'Update categories', 'Update categories'),
+('catalog.categories.delete', 'Delete categories', 'Delete categories'),
+('catalog.units.read', 'Read units', 'View units'),
+('catalog.units.create', 'Create units', 'Create units'),
+('catalog.units.update', 'Update units', 'Update units'),
+('catalog.units.delete', 'Delete units', 'Delete units'),
+('catalog.brands.read', 'Read brands', 'View brands'),
+('catalog.brands.create', 'Create brands', 'Create brands'),
+('catalog.brands.update', 'Update brands', 'Update brands'),
+('catalog.brands.delete', 'Delete brands', 'Delete brands'),
+('catalog.product-attributes.read', 'Read product attributes', 'View product attributes'),
+('catalog.product-attributes.create', 'Create product attributes', 'Create product attributes'),
+('catalog.product-attributes.update', 'Update product attributes', 'Update product attributes'),
+('catalog.product-variants.read', 'Read product variants', 'View product variants'),
+('catalog.product-variants.create', 'Create product variants', 'Create product variants'),
+('catalog.product-variants.update', 'Update product variants', 'Update product variants'),
+
+('inventory.warehouses.read', 'Read warehouses', 'View warehouses'),
+('inventory.warehouses.create', 'Create warehouses', 'Create warehouses'),
+('inventory.warehouses.update', 'Update warehouses', 'Update warehouses'),
+('inventory.purchase-orders.read', 'Read purchase orders', 'View purchase orders'),
+('inventory.purchase-orders.create', 'Create purchase orders', 'Create purchase orders'),
+('inventory.purchase-orders.update', 'Update purchase orders', 'Update purchase orders'),
+('inventory.purchase-orders.confirm', 'Confirm purchase orders', 'Confirm purchase orders'),
+('inventory.purchase-orders.complete', 'Complete purchase orders', 'Complete purchase orders'),
+('inventory.purchase-orders.cancel', 'Cancel purchase orders', 'Cancel purchase orders'),
+('inventory.purchase-orders.pay', 'Pay purchase orders', 'Create purchase order payments'),
+('inventory.purchase-returns.read', 'Read purchase returns', 'View purchase returns'),
+('inventory.purchase-returns.create', 'Create purchase returns', 'Create purchase returns'),
+('inventory.purchase-returns.complete', 'Complete purchase returns', 'Complete purchase returns'),
+('inventory.purchase-returns.cancel', 'Cancel purchase returns', 'Cancel purchase returns'),
+('inventory.stock-checks.read', 'Read stock checks', 'View stock checks'),
+('inventory.stock-checks.create', 'Create stock checks', 'Create stock checks'),
+('inventory.stock-checks.update', 'Update stock checks', 'Update stock checks'),
+('inventory.stock-checks.balance', 'Balance stock checks', 'Balance stock checks'),
+('inventory.stock-write-offs.read', 'Read stock write-offs', 'View stock write-offs'),
+('inventory.stock-write-offs.create', 'Create stock write-offs', 'Create stock write-offs'),
+('inventory.stock-write-offs.complete', 'Complete stock write-offs', 'Complete stock write-offs'),
+('inventory.stock-write-offs.cancel', 'Cancel stock write-offs', 'Cancel stock write-offs'),
+
+('operations.settings.read', 'Read settings', 'View settings'),
+('operations.settings.update', 'Update settings', 'Update settings'),
+('operations.files.upload', 'Upload files', 'Upload files'),
+('operations.files.read', 'Read files', 'Download files'),
+('operations.files.delete', 'Delete files', 'Delete files'),
+('operations.webhooks.read', 'Read webhooks', 'View webhooks'),
+('operations.webhooks.create', 'Create webhooks', 'Create webhooks'),
+('operations.webhooks.update', 'Update webhooks', 'Update webhooks'),
+('operations.webhooks.delete', 'Delete webhooks', 'Delete webhooks'),
+('operations.notifications.read', 'Read notifications', 'View notifications'),
+('operations.notifications.mark-read', 'Mark notifications read', 'Mark notifications as read'),
+('operations.notifications.mark-all-read', 'Mark all notifications read', 'Mark all notifications as read'),
+
+('reports.customers.read', 'Read customer reports', 'View customer reports')
 ON CONFLICT (code) DO NOTHING;

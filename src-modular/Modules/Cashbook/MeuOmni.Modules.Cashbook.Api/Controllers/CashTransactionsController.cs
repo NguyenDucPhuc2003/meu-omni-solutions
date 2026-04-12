@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using MeuOmni.BuildingBlocks.Idempotency;
 using MeuOmni.BuildingBlocks.Security;
 using MeuOmni.BuildingBlocks.Web;
 using MeuOmni.Modules.Cashbook.Application.Cashbooks;
@@ -20,6 +21,7 @@ public sealed class CashTransactionsController(
     }
 
     [RequirePermission(PermissionCodes.Cashbook.CashTransactions.Create)]
+    [RequireIdempotency]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateCashTransactionRequest request, CancellationToken cancellationToken)
     {
