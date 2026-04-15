@@ -9,4 +9,8 @@ public sealed class PagedResult<T>
     public required int PageSize { get; init; }
 
     public required int TotalCount { get; init; }
+
+    public string? Sorts { get; init; }
+
+    public string? Filters { get; init; }
 }

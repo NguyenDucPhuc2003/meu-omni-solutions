@@ -30,7 +30,9 @@ public static class QueryablePagingExtensions
             Items = items,
             Page = page,
             PageSize = pageSize,
-            TotalCount = totalCount
+            TotalCount = totalCount,
+            Sorts = request.Sorts,
+            Filters = request.Filters
         };
     }
 }

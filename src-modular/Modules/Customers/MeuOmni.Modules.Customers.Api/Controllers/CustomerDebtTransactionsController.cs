@@ -23,7 +23,8 @@ public sealed class CustomerDebtTransactionsController(
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateCustomerDebtTransactionRequest request, CancellationToken cancellationToken)
     {
-        return Ok(await customerDebtTransactionApplicationService.CreateAsync(request, cancellationToken));
+        var transaction = await customerDebtTransactionApplicationService.CreateAsync(request, cancellationToken);
+        return CreatedAtAction(nameof(GetById), new { id = transaction.Id }, transaction);
     }
 
     [RequirePermission(PermissionCodes.Customers.DebtTransactions.Read)]

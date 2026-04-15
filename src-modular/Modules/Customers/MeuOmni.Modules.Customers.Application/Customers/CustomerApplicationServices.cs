@@ -13,10 +13,13 @@ public sealed class CustomerApplicationService(
 {
     public Task<PagedResult<CustomerDto>> ListAsync(CustomerListQuery query, CancellationToken cancellationToken = default)
     {
-        return customerRepository
+        var sourceQuery = customerRepository
             .Query()
+            .Where(x => query.IncludeInactive || x.IsActive)
             .OrderByDescending(x => x.CreatedAtUtc)
-            .ToPagedResultAsync(query, sieveProcessor, ToDto, cancellationToken);
+            .AsQueryable();
+
+        return sourceQuery.ToPagedResultAsync(query, sieveProcessor, ToDto, cancellationToken);
     }
 
     public async Task<CustomerDto?> GetByIdAsync(Guid customerId, CancellationToken cancellationToken = default)
@@ -28,7 +31,34 @@ public sealed class CustomerApplicationService(
     public async Task<CustomerDto> CreateAsync(CreateCustomerRequest request, CancellationToken cancellationToken = default)
     {
         var tenantId = TenantContextGuard.ResolveTenantId(tenantContextAccessor, request.TenantId);
-        var customer = new Customer(tenantId, request.FullName, request.Code, request.Phone, request.Email, request.Address, request.Note);
+        if (!string.IsNullOrWhiteSpace(request.Code))
+        {
+            var normalizedCode = request.Code.Trim();
+            var isCodeUsed = await customerRepository.ExistsByCodeAsync(tenantId, normalizedCode, cancellationToken);
+            if (isCodeUsed)
+            {
+                throw new InvalidOperationException($"Customer code '{normalizedCode}' already exists.");
+            }
+        }
+
+        var customer = new Customer(
+            tenantId,
+            request.StoreId,
+            request.FullName,
+            request.Code,
+            request.GroupId,
+            request.CustomerType,
+            request.CompanyName,
+            request.TaxCode,
+            request.Phone,
+            request.Email,
+            request.Gender,
+            request.Birthday,
+            request.AddressLine,
+            request.Ward,
+            request.District,
+            request.City,
+            request.Note);
 
         await customerRepository.AddAsync(customer, cancellationToken);
         await customerRepository.SaveChangesAsync(cancellationToken);
@@ -44,7 +74,21 @@ public sealed class CustomerApplicationService(
             return null;
         }
 
-        customer.Update(request.FullName, request.Phone, request.Email, request.Address, request.Note);
+        customer.Update(
+            request.FullName,
+            request.GroupId,
+            request.CustomerType,
+            request.CompanyName,
+            request.TaxCode,
+            request.Phone,
+            request.Email,
+            request.Gender,
+            request.Birthday,
+            request.AddressLine,
+            request.Ward,
+            request.District,
+            request.City,
+            request.Note);
         await customerRepository.SaveChangesAsync(cancellationToken);
 
         return ToDto(customer);
@@ -119,6 +163,25 @@ public sealed class CustomerApplicationService(
         };
     }
 
+    public async Task<CustomerStatisticsDto?> GetStatisticsAsync(Guid customerId, CancellationToken cancellationToken = default)
+    {
+        var customer = await customerRepository.GetByIdAsync(customerId, cancellationToken);
+        if (customer is null)
+        {
+            return null;
+        }
+
+        return new CustomerStatisticsDto
+        {
+            CustomerId = customer.Id,
+            TotalInvoices = 0,
+            TotalPurchaseAmount = customer.TotalSpent,
+            TotalReturnAmount = 0,
+            NetPurchaseAmount = customer.TotalSpent,
+            LastPurchaseAt = null
+        };
+    }
+
     public Task<PagedResult<CustomerDebtTransactionDto>> GetDebtTransactionsAsync(Guid customerId, CustomerDebtTransactionListQuery query, CancellationToken cancellationToken = default)
     {
         return customerDebtTransactionRepository
@@ -133,11 +196,21 @@ public sealed class CustomerApplicationService(
         return new CustomerDto
         {
             Id = customer.Id,
+            StoreId = customer.StoreId,
             Code = customer.Code,
+            GroupId = customer.GroupId,
             FullName = customer.FullName,
+            CustomerType = customer.CustomerType,
+            CompanyName = customer.CompanyName,
+            TaxCode = customer.TaxCode,
             Phone = customer.Phone,
             Email = customer.Email,
-            Address = customer.Address,
+            Gender = customer.Gender,
+            Birthday = customer.Birthday,
+            AddressLine = customer.AddressLine,
+            Ward = customer.Ward,
+            District = customer.District,
+            City = customer.City,
             Note = customer.Note,
             DebtBalance = customer.DebtBalance,
             TotalSpent = customer.TotalSpent,
@@ -187,10 +260,12 @@ public sealed class CustomerDebtTransactionApplicationService(
         var customer = await customerRepository.GetByIdAsync(request.CustomerId, cancellationToken)
             ?? throw new InvalidOperationException($"Customer {request.CustomerId} was not found.");
 
+        var transactionType = ResolveTransactionType(request);
+
         var transaction = new CustomerDebtTransaction(
             tenantId,
             request.CustomerId,
-            request.Type,
+            transactionType,
             request.Amount,
             request.SourceDocumentType,
             request.SourceDocumentId,
@@ -216,6 +291,113 @@ public sealed class CustomerDebtTransactionApplicationService(
             SourceDocumentId = transaction.SourceDocumentId,
             Note = transaction.Note,
             CreatedAtUtc = transaction.CreatedAtUtc
+        };
+    }
+
+    private static CustomerDebtTransactionType ResolveTransactionType(CreateCustomerDebtTransactionRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.TxnType))
+        {
+            if (Enum.TryParse<CustomerDebtTransactionType>(request.TxnType, true, out var parsedType))
+            {
+                return parsedType;
+            }
+
+            throw new InvalidOperationException("Debt transaction type is invalid.");
+        }
+
+        if (request.Type.HasValue)
+        {
+            return request.Type.Value;
+        }
+
+        throw new InvalidOperationException("Debt transaction type is required.");
+    }
+}
+
+public sealed class CustomerGroupApplicationService(
+    ICustomerGroupRepository customerGroupRepository,
+    ICustomerRepository customerRepository,
+    ITenantContextAccessor tenantContextAccessor,
+    ISieveProcessor sieveProcessor) : ICustomerGroupApplicationService
+{
+    public Task<PagedResult<CustomerGroupDto>> ListAsync(CustomerGroupListQuery query, CancellationToken cancellationToken = default)
+    {
+        var sourceQuery = customerGroupRepository
+            .Query()
+            .Where(x => query.IncludeInactive || x.IsActive)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .AsQueryable();
+
+        return sourceQuery.ToPagedResultAsync(query, sieveProcessor, ToDto, cancellationToken);
+    }
+
+    public async Task<CustomerGroupDto?> GetByIdAsync(Guid groupId, CancellationToken cancellationToken = default)
+    {
+        var group = await customerGroupRepository.GetByIdAsync(groupId, cancellationToken);
+        return group is null ? null : ToDto(group);
+    }
+
+    public async Task<CustomerGroupDto> CreateAsync(CreateCustomerGroupRequest request, CancellationToken cancellationToken = default)
+    {
+        var tenantId = TenantContextGuard.ResolveTenantId(tenantContextAccessor, request.TenantId);
+        var normalizedCode = request.Code.Trim();
+        var isCodeUsed = await customerGroupRepository.ExistsByCodeAsync(tenantId, normalizedCode, cancellationToken);
+        if (isCodeUsed)
+        {
+            throw new InvalidOperationException($"Customer group code '{normalizedCode}' already exists.");
+        }
+
+        var group = new CustomerGroup(tenantId, normalizedCode, request.Name, request.Description);
+
+        await customerGroupRepository.AddAsync(group, cancellationToken);
+        await customerGroupRepository.SaveChangesAsync(cancellationToken);
+
+        return ToDto(group);
+    }
+
+    public async Task<CustomerGroupDto?> UpdateAsync(Guid groupId, UpdateCustomerGroupRequest request, CancellationToken cancellationToken = default)
+    {
+        var group = await customerGroupRepository.GetByIdAsync(groupId, cancellationToken);
+        if (group is null)
+        {
+            return null;
+        }
+
+        group.Update(request.Name, request.Description);
+        await customerGroupRepository.SaveChangesAsync(cancellationToken);
+
+        return ToDto(group);
+    }
+
+    public async Task<bool> DeleteAsync(Guid groupId, CancellationToken cancellationToken = default)
+    {
+        var group = await customerGroupRepository.GetByIdAsync(groupId, cancellationToken);
+        if (group is null)
+        {
+            return false;
+        }
+
+        var inUse = await customerRepository.ExistsByGroupIdAsync(groupId, cancellationToken);
+        if (inUse)
+        {
+            throw new InvalidOperationException("Customer group cannot be deleted because it is still assigned to one or more customers.");
+        }
+
+        customerGroupRepository.Remove(group);
+        await customerGroupRepository.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    private static CustomerGroupDto ToDto(CustomerGroup group)
+    {
+        return new CustomerGroupDto
+        {
+            Id = group.Id,
+            Code = group.Code,
+            Name = group.Name,
+            Description = group.Description,
+            IsActive = group.IsActive
         };
     }
 }

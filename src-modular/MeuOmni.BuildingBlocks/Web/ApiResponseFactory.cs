@@ -134,6 +134,8 @@ public static class ApiResponseFactory
         var page = valueType.GetProperty(nameof(PagedResult<object>.Page))?.GetValue(value);
         var pageSize = valueType.GetProperty(nameof(PagedResult<object>.PageSize))?.GetValue(value);
         var totalCount = valueType.GetProperty(nameof(PagedResult<object>.TotalCount))?.GetValue(value);
+        var sorts = valueType.GetProperty(nameof(PagedResult<object>.Sorts))?.GetValue(value);
+        var filters = valueType.GetProperty(nameof(PagedResult<object>.Filters))?.GetValue(value);
 
         envelope = new ApiResponseEnvelope
         {
@@ -144,7 +146,9 @@ public static class ApiResponseFactory
             {
                 ["page"] = page,
                 ["page_size"] = pageSize,
-                ["total"] = totalCount
+                ["total"] = totalCount,
+                ["sorts"] = sorts,
+                ["filters"] = filters
             },
             TraceId = context.TraceIdentifier
         };
@@ -181,13 +185,13 @@ public static class ApiResponseFactory
     {
         return statusCode switch
         {
-            StatusCodes.Status400BadRequest => "bad_request",
-            StatusCodes.Status401Unauthorized => "unauthorized",
-            StatusCodes.Status403Forbidden => "forbidden",
-            StatusCodes.Status404NotFound => "not_found",
-            StatusCodes.Status409Conflict => "conflict",
-            StatusCodes.Status422UnprocessableEntity => "validation_error",
-            _ => "request_failed"
+            StatusCodes.Status400BadRequest => "BAD_REQUEST",
+            StatusCodes.Status401Unauthorized => "UNAUTHORIZED",
+            StatusCodes.Status403Forbidden => "FORBIDDEN",
+            StatusCodes.Status404NotFound => "NOT_FOUND",
+            StatusCodes.Status409Conflict => "CONFLICT",
+            StatusCodes.Status422UnprocessableEntity => "VALIDATION_ERROR",
+            _ => "REQUEST_FAILED"
         };
     }
 }

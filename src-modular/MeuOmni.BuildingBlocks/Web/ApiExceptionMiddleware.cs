@@ -13,15 +13,15 @@ public sealed class ApiExceptionMiddleware(RequestDelegate next)
         }
         catch (DomainException exception)
         {
-            await WriteErrorAsync(context, StatusCodes.Status400BadRequest, exception.Message, "domain_error");
+            await WriteErrorAsync(context, StatusCodes.Status400BadRequest, exception.Message, "DOMAIN_ERROR");
         }
         catch (InvalidOperationException exception)
         {
-            await WriteErrorAsync(context, StatusCodes.Status400BadRequest, exception.Message, "invalid_operation");
+            await WriteErrorAsync(context, StatusCodes.Status400BadRequest, exception.Message, "INVALID_OPERATION");
         }
         catch (Exception exception)
         {
-            await WriteErrorAsync(context, StatusCodes.Status500InternalServerError, exception.Message, "internal_server_error");
+            await WriteErrorAsync(context, StatusCodes.Status500InternalServerError, exception.Message, "INTERNAL_SERVER_ERROR");
         }
     }
 

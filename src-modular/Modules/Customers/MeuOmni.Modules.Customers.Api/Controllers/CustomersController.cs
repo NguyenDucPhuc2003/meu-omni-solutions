@@ -23,7 +23,8 @@ public sealed class CustomersController(
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateCustomerRequest request, CancellationToken cancellationToken)
     {
-        return Ok(await customerApplicationService.CreateAsync(request, cancellationToken));
+        var customer = await customerApplicationService.CreateAsync(request, cancellationToken);
+        return CreatedAtAction(nameof(GetById), new { id = customer.Id }, customer);
     }
 
     [RequirePermission(PermissionCodes.Customers.Profiles.Read)]
@@ -47,6 +48,14 @@ public sealed class CustomersController(
     public async Task<IActionResult> GetPurchaseHistory(Guid id, CancellationToken cancellationToken)
     {
         return Ok(await customerApplicationService.GetPurchaseHistoryAsync(id, cancellationToken));
+    }
+
+    [RequirePermission(PermissionCodes.Customers.Profiles.Read)]
+    [HttpGet("{id:guid}/statistics")]
+    public async Task<IActionResult> GetStatistics(Guid id, CancellationToken cancellationToken)
+    {
+        var statistics = await customerApplicationService.GetStatisticsAsync(id, cancellationToken);
+        return statistics is null ? NotFound() : Ok(statistics);
     }
 
     [RequirePermission(PermissionCodes.Customers.Profiles.Read)]

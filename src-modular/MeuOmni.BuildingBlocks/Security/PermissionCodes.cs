@@ -123,6 +123,14 @@ public static class PermissionCodes
             public const string Deactivate = "customers.profiles.deactivate";
         }
 
+        public static class Groups
+        {
+            public const string Read = "customers.groups.read";
+            public const string Create = "customers.groups.create";
+            public const string Update = "customers.groups.update";
+            public const string Delete = "customers.groups.delete";
+        }
+
         public static class DebtTransactions
         {
             public const string Read = "customers.debt-transactions.read";

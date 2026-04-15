@@ -75,7 +75,7 @@ builder.Services
                 context.HttpContext,
                 StatusCodes.Status400BadRequest,
                 "Validation error",
-                "validation_error",
+                "VALIDATION_ERROR",
                 errors));
         };
     })
@@ -131,7 +131,11 @@ foreach (var module in modules)
 
 var app = builder.Build();
 
-await EnsureModuleDatabasesCreatedAsync(app);
+var skipDatabaseInitialization = app.Configuration.GetValue<bool>("Bootstrap:SkipDatabaseInitialization");
+if (!skipDatabaseInitialization)
+{
+    await EnsureModuleDatabasesCreatedAsync(app);
+}
 
 app.UseRouting();
 app.UseMiddleware<ApiExceptionMiddleware>();

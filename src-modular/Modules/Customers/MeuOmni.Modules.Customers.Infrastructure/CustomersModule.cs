@@ -25,7 +25,9 @@ public sealed class CustomersModule : IModuleDefinition
         services.AddDbContext<CustomersDbContext>(options => options.UseNpgsql(connectionString));
         services.AddScoped<ICustomerRepository, CustomerRepository>();
         services.AddScoped<ICustomerDebtTransactionRepository, CustomerDebtTransactionRepository>();
+        services.AddScoped<ICustomerGroupRepository, CustomerGroupRepository>();
         services.AddScoped<ICustomerApplicationService, CustomerApplicationService>();
         services.AddScoped<ICustomerDebtTransactionApplicationService, CustomerDebtTransactionApplicationService>();
+        services.AddScoped<ICustomerGroupApplicationService, CustomerGroupApplicationService>();
     }
 }
