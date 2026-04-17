@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src-modular\MeuOmni.BuildingBlocks\MeuOmni.BuildingBlocks.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\AccessControl\MeuOmni.Modules.AccessControl.Infrastructure\MeuOmni.Modules.AccessControl.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\SalesChannel\MeuOmni.Modules.SalesChannel.Infrastructure\MeuOmni.Modules.SalesChannel.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\Customers\MeuOmni.Modules.Customers.Infrastructure\MeuOmni.Modules.Customers.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\Catalog\MeuOmni.Modules.Catalog.Infrastructure\MeuOmni.Modules.Catalog.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\Inventory\MeuOmni.Modules.Inventory.Infrastructure\MeuOmni.Modules.Inventory.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\Cashbook\MeuOmni.Modules.Cashbook.Infrastructure\MeuOmni.Modules.Cashbook.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\Suppliers\MeuOmni.Modules.Suppliers.Infrastructure\MeuOmni.Modules.Suppliers.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\Operations\MeuOmni.Modules.Operations.Infrastructure\MeuOmni.Modules.Operations.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\Reporting\MeuOmni.Modules.Reporting.Infrastructure\MeuOmni.Modules.Reporting.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\Auditing\MeuOmni.Modules.Auditing.Infrastructure\MeuOmni.Modules.Auditing.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src-modular\Modules\SimpleCommerce\MeuOmni.Modules.SimpleCommerce.Infrastructure\MeuOmni.Modules.SimpleCommerce.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.0" />
+  </ItemGroup>
+</Project>
